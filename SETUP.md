@@ -65,24 +65,71 @@ funded from https://faucet.circle.com (20 USDC each, verified on-chain 2026-09-1
 
 ## Part C — Project setup
 
-*(Filled in as each build step lands. Steps 3–8 of the build order.)*
-
-### C1. Clone / open the project
+### C1. Get the code
 ```powershell
+git clone https://github.com/Reen500/moloko-arc-spend-tracker.git C:\dev\arc-spend-tracker
 cd C:\dev\arc-spend-tracker
+npm install
+```
+Installs Hardhat 3 + viem (dev-only, ~150 MB). Takes a minute.
+
+### C2. Compile and test the contract — *Step 3*
+```powershell
+npx hardhat test
+```
+Expect `12 passing`. This runs on a local simulated chain; nothing touches Arc.
+
+### C3. Configure `.env`
+```powershell
+copy .env.example .env
+notepad .env
+```
+Fill in `DEPLOYER_PRIVATE_KEY` (Arc-Deployer) now — see Part B "Exporting private
+keys". `AGENT_PRIVATE_KEY` can wait until C6. Save and close. Confirm git ignores it:
+```powershell
+git status --short    # .env must NOT appear
 ```
 
-### C2. Install and test the contract — *Step 3*
-_Coming._
+### C4. Deploy to Arc Testnet — *Step 4*
+```powershell
+npx hardhat run scripts/deploy.js --network arcTestnet
+```
+Costs ≈ 0.013 USDC in gas. Prints the address, tx hash and ArcScan links, and
+writes `deployed.json`. Optional — publish the source so ArcScan shows it:
+```powershell
+npx hardhat verify blockscout --network arcTestnet <address-from-deployed.json>
+```
 
-### C3. Deploy to Arc Testnet — *Step 4*
-_Coming._
+### C5. Run the paid service — *Step 5*
+Terminal 1:
+```powershell
+cd C:\dev\arc-spend-tracker\service
+npm install
+npm start
+```
+You should see `listening http://localhost:3001` plus the payTo and SpendLogger
+addresses. Prove the paywall works (expect `402 Payment Required`):
+```powershell
+curl.exe -i -X POST http://localhost:3001/api/process-description -H "content-type: application/json" -d "{\"description\":\"Receive invoice by email, extract totals, post to Xero.\"}"
+```
 
-### C4. Run the paid service — *Step 5*
-_Coming._
+### C6. Run the paying agent — *Steps 6 and 7*
+Put `AGENT_PRIVATE_KEY` (Arc-Agent) into `.env` if it is not there yet. Terminal 2:
+```powershell
+cd C:\dev\arc-spend-tracker\agent
+npm install
+node agent.js --dry-run                    # reads the 402, signs nothing
+node agent.js                              # one paid call
+node agent.js --calls 5 --delay 30-120     # build history, randomly spaced
+```
+Each call prints two tx hashes with ArcScan links: the USDC payment and the
+`logPurchase`. The agent then re-reads the chain to confirm the `PurchaseLogged`
+event and its own USDC balance change.
 
-### C5. Run the paying agent — *Step 6*
-_Coming._
+### C7. See it on ArcScan
+- Contract → **Logs**: https://testnet.arcscan.app/address/0x683D3D53a86359132ed19BD9270033f31c647f83?tab=logs
+- Contract → **Read contract**: `purchaseCount`, `getPurchase(id)`, `totalSpentBy(agent)`
+- Free JSON view from the running service: http://localhost:3001/api/ledger
 
 ---
 
