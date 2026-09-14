@@ -20,6 +20,8 @@ npm install
 node agent.js                # 1 paid call
 node agent.js --calls 5      # 5 paid calls, cycling through sample processes
 node agent.js --dry-run      # inspect the 402 only, sign nothing
+node agent.js --calls 5 --delay 60      # 60 s pause between calls
+node agent.js --calls 5 --delay 30-120  # random 30–120 s pause between calls
 ```
 
 Reads `../.env`:
