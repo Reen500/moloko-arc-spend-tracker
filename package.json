@@ -1,0 +1,22 @@
+{
+  "name": "moloko-arc-spend-tracker",
+  "version": "0.1.0",
+  "description": "On-chain audit log for autonomous-agent purchases on Circle's Arc L1 — SpendLogger contract + x402-paid service + paying agent",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "Moloko Labs",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:arc": "hardhat run scripts/deploy.js --network arcTestnet",
+    "service": "npm --prefix service start",
+    "agent": "npm --prefix agent start"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
+    "dotenv": "^17.4.2",
+    "hardhat": "^3.16.0",
+    "viem": "^2.56.5"
+  }
+}
