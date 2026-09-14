@@ -11,7 +11,9 @@
     "deployedAt": "2026-09-14T06:52:15.963Z",
     "explorer": {
       "contract": "https://testnet.arcscan.app/address/0x683D3D53a86359132ed19BD9270033f31c647f83",
-      "tx": "https://testnet.arcscan.app/tx/0xf041afee453f41cf227635cd7a938da25aa27094f9172db6fbe935cdd2215343"
-    }
+      "tx": "https://testnet.arcscan.app/tx/0xf041afee453f41cf227635cd7a938da25aa27094f9172db6fbe935cdd2215343",
+      "code": "https://testnet.arcscan.app/address/0x683D3D53a86359132ed19BD9270033f31c647f83#code"
+    },
+    "verified": true
   }
 }

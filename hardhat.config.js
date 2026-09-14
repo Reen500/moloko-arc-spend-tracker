@@ -14,6 +14,21 @@ const deployerAccounts = process.env.DEPLOYER_PRIVATE_KEY
 
 export default defineConfig({
   plugins: [hardhatToolboxViem],
+  // Teaches hardhat-verify where Arc Testnet's Blockscout lives:
+  //   npx hardhat verify blockscout --network arcTestnet <address>
+  chainDescriptors: {
+    [ARC_TESTNET_CHAIN_ID]: {
+      name: "Arc Testnet",
+      chainType: "generic",
+      blockExplorers: {
+        blockscout: {
+          name: "ArcScan",
+          url: "https://testnet.arcscan.app",
+          apiUrl: "https://testnet.arcscan.app/api",
+        },
+      },
+    },
+  },
   solidity: {
     version: "0.8.24",
     settings: {
