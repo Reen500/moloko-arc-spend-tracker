@@ -1,0 +1,18 @@
+{
+  "name": "arc-spend-tracker-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "x402-paid API on Arc Testnet that logs every paid call to SpendLogger",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@x402/core": "2.25.0",
+    "@x402/evm": "2.25.0",
+    "@x402/express": "2.25.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.1.0",
+    "viem": "^2.56.5"
+  }
+}
