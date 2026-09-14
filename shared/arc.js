@@ -29,14 +29,26 @@ export const arcTestnet = defineChain({
   blockExplorers: { default: { name: "ArcScan", url: ARC_TESTNET_EXPLORER } },
 });
 
-/** Minimal SpendLogger ABI — mirrors contracts/SpendLogger.sol. */
+/** Minimal SpendLogger v2 ABI — mirrors contracts/SpendLogger.sol. */
 export const spendLoggerAbi = parseAbi([
+  // ledger
   "function logPurchase(address agent, address service, uint256 amount, string memo) returns (uint256 id)",
   "function purchaseCount() view returns (uint256)",
-  "function getPurchase(uint256 id) view returns ((address agent, address service, uint256 amount, uint256 timestamp, string memo, address reporter))",
+  "function getPurchase(uint256 id) view returns ((address agent, address service, uint256 amount, uint256 timestamp, string memo, address reporter, bytes32 policyHash))",
   "function totalSpentBy(address) view returns (uint256)",
   "function totalEarnedBy(address) view returns (uint256)",
-  "event PurchaseLogged(uint256 indexed id, address indexed agent, address indexed service, uint256 amount, string memo, address reporter, uint256 timestamp)",
+  "event PurchaseLogged(uint256 indexed id, address indexed agent, address indexed service, uint256 amount, string memo, address reporter, uint256 timestamp, bytes32 policyHash)",
+  // policy attestation
+  "function controllerOf(address agent) view returns (address)",
+  "function policyOf(address agent) view returns (bytes32)",
+  "function setController(address agent, address controller)",
+  "function setPolicy(address agent, bytes32 policyHash)",
+  "event ControllerSet(address indexed agent, address indexed controller, address indexed setBy)",
+  "event PolicySet(address indexed agent, bytes32 indexed policyHash, address indexed controller)",
+  // outcomes
+  "function recordOutcome(uint256 id, uint8 score, bytes32 reasonHash)",
+  "function getOutcome(uint256 id) view returns ((uint8 score, bytes32 reasonHash, address recordedBy, uint256 timestamp, bool recorded))",
+  "event OutcomeRecorded(uint256 indexed id, address indexed agent, uint8 score, bytes32 reasonHash, address recordedBy)",
 ]);
 
 export const usdcAbi = parseAbi([

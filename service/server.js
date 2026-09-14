@@ -161,8 +161,15 @@ app.get("/api/ledger", async (req, res) => {
   const ids = [];
   for (let i = count - 1n; i >= 0n && ids.length < limit; i--) ids.push(i);
   const purchases = await Promise.all(ids.map(async (id) => {
-    const p = await chainClient.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "getPurchase", args: [id] });
-    return { id: id.toString(), agent: p.agent, service: p.service, amount: p.amount.toString(), usd: fmtUsdc(p.amount), timestamp: Number(p.timestamp), memo: p.memo, reporter: p.reporter };
+    const [p, o] = await Promise.all([
+      chainClient.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "getPurchase", args: [id] }),
+      chainClient.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "getOutcome", args: [id] }),
+    ]);
+    return {
+      id: id.toString(), agent: p.agent, service: p.service, amount: p.amount.toString(), usd: fmtUsdc(p.amount),
+      timestamp: Number(p.timestamp), memo: p.memo, reporter: p.reporter, policyHash: p.policyHash,
+      outcome: o.recorded ? { score: o.score, reasonHash: o.reasonHash, recordedBy: o.recordedBy, timestamp: Number(o.timestamp) } : null,
+    };
   }));
   res.json({ contract: SPEND_LOGGER, explorer: addressUrl(SPEND_LOGGER), purchaseCount: count.toString(), purchases });
 });

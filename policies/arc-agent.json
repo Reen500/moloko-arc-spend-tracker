@@ -1,0 +1,11 @@
+{
+  "version": "1",
+  "description": "Moloko Labs demo agent — Arc Testnet. Small, bounded spend on approved services only.",
+  "agent": "0xaAf714460A9FbEc7C3f0618cf04E84938b86DC8D",
+  "controller": "0x52DF4736C94BA91cf7d49b84b642089F85A47C77",
+  "network": "eip155:5042002",
+  "asset": "0x3600000000000000000000000000000000000000",
+  "maxPerCall": "20000",
+  "dailyCap": "1000000",
+  "allowedPayees": ["0x52DF4736C94BA91cf7d49b84b642089F85A47C77"]
+}
