@@ -15,9 +15,11 @@ import { arcTestnet, ARC_TESTNET_RPC, spendLoggerAbi, txUrl } from "../shared/ar
 import { validatePolicy, policyHash, canonicalize } from "../shared/policy.js";
 
 const argv = process.argv.slice(2);
-const cmd = argv.find((a) => !a.startsWith("--")) ?? "show";
 const pi = argv.indexOf("--policy");
 const POLICY_PATH = pi === -1 ? "policies/arc-agent.json" : argv[pi + 1];
+const positional = argv.filter((a, i) => !a.startsWith("--") && (pi === -1 || i !== pi + 1));
+const cmd = positional[0] ?? "show";
+if (!["show", "bind", "set"].includes(cmd)) throw new Error(`unknown command "${cmd}" — use show | bind | set`);
 
 const deployed = JSON.parse(readFileSync("deployed.json", "utf8"));
 const SPEND_LOGGER = getAddress(deployed.arcTestnet.address);

@@ -41,6 +41,8 @@ const DRY_RUN = argv.includes("--dry-run");
 const RECORD_OUTCOME = !argv.includes("--no-outcome");
 const POLICY_PATH = String(flag("--policy", "policies/arc-agent.json"));
 const PROCESS_OFFSET = Number(flag("--process", 0)); // which sample process to start from
+const BAD_BODY = argv.includes("--bad-body");   // pay, but send a body the handler rejects (expect: not charged)
+const REPLAY = argv.includes("--replay");       // after a paid call, re-send the same signed request (expect: rejected)
 const DELAY = String(flag("--delay", "0"));
 const [DELAY_MIN, DELAY_MAX] = DELAY.split("-").map(Number).concat([NaN]).slice(0, 2);
 const nextDelayMs = () => {
@@ -150,7 +152,19 @@ const client = x402Client.fromConfig({
     }
     console.log(`  ✓ policy ok — ${fmtUsdc(offer.amount)} to ${offer.payTo.slice(0, 10)}…, spent today ${fmtUsdc(spentToday)} / ${fmtUsdc(policy.dailyCap)}`);
   });
-const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+// Capture the exact paid request (headers + body) so --replay can re-send it.
+let lastPaidRequest = null;
+const recordingFetch = async (input, init) => {
+  // @x402/fetch passes a Request object on the paid retry; handle both shapes.
+  if (input instanceof Request && input.headers.has("PAYMENT-SIGNATURE")) {
+    const clone = input.clone();
+    lastPaidRequest = { url: clone.url, init: { method: clone.method, headers: Object.fromEntries(clone.headers.entries()), body: await clone.text() } };
+  } else if (init?.headers && new Headers(init.headers).has("PAYMENT-SIGNATURE")) {
+    lastPaidRequest = { url: String(input), init: { ...init, headers: Object.fromEntries(new Headers(init.headers).entries()) } };
+  }
+  return fetch(input, init);
+};
+const fetchWithPayment = wrapFetchWithPayment(recordingFetch, client);
 
 // ---------------------------------------------------------------------------
 // 1. Discover
@@ -199,8 +213,10 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
   const t0 = Date.now();
   let res;
   try {
+    const sent = BAD_BODY ? { description: "x" } : { description };
+    if (BAD_BODY) console.log(`  --bad-body: sending an invalid body WITH payment; the handler should 400 and no USDC should move`);
     res = await fetchWithPayment(ENDPOINT, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ description }),
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sent),
     });
   } catch (err) {
     if (/Payment creation aborted/.test(err.message)) { console.log(`  → call skipped, nothing paid`); continue; }
@@ -214,7 +230,14 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
   }
   const ms = Date.now() - t0;
   const body = await res.json();
-  if (res.status !== 200) { console.error(`  ✗ HTTP ${res.status}`, JSON.stringify(body)); break; }
+  if (res.status !== 200) {
+    // A paid request that the handler rejected. x402 cancels settlement on a
+    // 4xx/5xx, so no USDC should have moved — the on-chain check below proves it.
+    console.log(`  ✗ HTTP ${res.status} after payment header was sent: ${JSON.stringify(body)}`);
+    console.log(`    PAYMENT-RESPONSE header present: ${res.headers.has("PAYMENT-RESPONSE")}`);
+    results.push({ settlement: null, logTx: null, logId: null, outcomeTx: null, rejected: res.status });
+    continue;
+  }
 
   const settlement = decodePaymentResponseHeader(res.headers.get("PAYMENT-RESPONSE"));
   const logTx = res.headers.get("X-Spend-Log-Tx");
@@ -226,6 +249,31 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
   console.log(`  plan     ${body.plan.process_name} — ${body.plan.summary}`);
   console.log(`  paid     ${settlement.transaction}  ${txUrl(settlement.transaction)}`);
   console.log(`  logged   ${logTx ?? "(header missing)"}  ${logTx ? txUrl(logTx) : ""}  purchase #${logId ?? "?"}`);
+
+  // Don't trust the service's ledger entry: it must match what we actually paid.
+  if (logId != null) {
+    const p = await chain.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "getPurchase", args: [BigInt(logId)] });
+    const problems = [];
+    if (p.amount !== BigInt(offer.amount)) problems.push(`amount logged ${p.amount} ≠ paid ${offer.amount}`);
+    if (getAddress(p.agent) !== getAddress(account.address)) problems.push(`agent logged ${p.agent} ≠ me`);
+    if (getAddress(p.service) !== getAddress(offer.payTo)) problems.push(`service logged ${p.service} ≠ payTo ${offer.payTo}`);
+    if (!p.memo.includes(settlement.transaction)) problems.push(`memo does not reference settlement tx`);
+    if (problems.length) { console.log(`  !! LEDGER MISMATCH: ${problems.join("; ")}`); r.mismatch = problems; }
+    else console.log(`  ✓ ledger entry matches payment (amount, agent, payee, settlement tx)`);
+  }
+
+  if (REPLAY && lastPaidRequest) {
+    // Same signed authorization, sent again. EIP-3009 nonces are single-use, so
+    // verify must reject it and the agent must not be charged twice.
+    console.log(`  --replay: re-sending the identical PAYMENT-SIGNATURE …`);
+    const balMid = await usdcBalance(account.address);
+    const again = await fetch(lastPaidRequest.url, lastPaidRequest.init);
+    const againBody = await again.text();
+    const balAfterReplay = await usdcBalance(account.address);
+    console.log(`  replay → HTTP ${again.status}  ${againBody.slice(0, 160)}`);
+    console.log(`  USDC moved by replay: ${fmtUsdc(balMid - balAfterReplay)}  ${balMid === balAfterReplay ? "✓ not charged twice" : "!! CHARGED AGAIN"}`);
+    r.replay = { status: again.status, charged: balMid !== balAfterReplay };
+  }
 
   if (RECORD_OUTCOME && logId != null) {
     const { score, reason } = scorePlan(body.plan, description);
@@ -247,8 +295,13 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
 if (results.length) {
   const balanceAfter = await usdcBalance(account.address);
   console.log(`\n── on-chain check ────────────────────────────────────────────`);
-  console.log(`  USDC spent by agent : ${fmtUsdc(balanceBefore - balanceAfter)} (${results.length} paid call(s), ${refusals} refused; includes outcome gas)`);
-  const last = results.at(-1);
+  const paidCalls = results.filter((x) => x.settlement).length;
+  const rejectedAfterPay = results.filter((x) => x.rejected).length;
+  console.log(`  USDC spent by agent : ${fmtUsdc(balanceBefore - balanceAfter)} (${paidCalls} paid call(s), ${rejectedAfterPay} rejected-after-payment-header, ${refusals} refused; includes outcome gas)`);
+  if (rejectedAfterPay && paidCalls === 0) {
+    console.log(`  handler rejected the paid request: USDC delta ${balanceBefore - balanceAfter} base units → ${balanceBefore === balanceAfter ? "✓ NOT charged" : "!! CHARGED despite rejection"}`);
+  }
+  const last = results.filter((x) => x.settlement).at(-1) ?? results.at(-1);
   if (last.logId != null) {
     const p = await chain.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "getPurchase", args: [BigInt(last.logId)] });
     console.log(`  purchase #${last.logId}: agent=${p.agent} amount=${fmtUsdc(p.amount)} policyHash=${p.policyHash}`);

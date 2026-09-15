@@ -21,7 +21,7 @@ import { ExactEvmScheme as ExactEvmServerScheme } from "@x402/evm/exact/server";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { registerExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { toFacilitatorEvmSigner } from "@x402/evm";
-import { createWalletClient, http, publicActions, getAddress } from "viem";
+import { createWalletClient, http, publicActions, getAddress, parseEventLogs } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   arcTestnet, ARC_TESTNET_CAIP2, ARC_TESTNET_RPC, ARC_TESTNET_USDC, ARC_TESTNET_USDC_EIP712,
@@ -62,6 +62,24 @@ const chainClient = createWalletClient({ account, chain: arcTestnet, transport: 
 const SERVICE_ADDRESS = account.address;
 
 // ---------------------------------------------------------------------------
+// TEST-ONLY overrides — used by agent/policy-trial.js to make the service
+// advertise a payTo / asset the agent's policy must refuse. Never set these in
+// production: a paying client would send funds to TEST_ONLY_PAYTO.
+// ---------------------------------------------------------------------------
+const TEST_ONLY_PAYTO = process.env.TEST_ONLY_PAYTO ? getAddress(process.env.TEST_ONLY_PAYTO) : null;
+const TEST_ONLY_ASSET = process.env.TEST_ONLY_ASSET ? getAddress(process.env.TEST_ONLY_ASSET) : null;
+if ((TEST_ONLY_PAYTO || TEST_ONLY_ASSET) && process.env.NODE_ENV === "production") {
+  throw new Error("TEST_ONLY_* overrides are not allowed with NODE_ENV=production");
+}
+const PAY_TO = TEST_ONLY_PAYTO ?? SERVICE_ADDRESS;
+const PRICE_ASSET = TEST_ONLY_ASSET ?? ARC_TESTNET_USDC;
+// EIP-712 domain of the priced asset. USDC and EURC on Arc Testnet are both
+// Circle FiatTokenV2_2 with version "2"; the name differs.
+const PRICE_ASSET_EIP712 = TEST_ONLY_ASSET
+  ? { name: process.env.TEST_ONLY_ASSET_NAME ?? "EURC", version: "2" }
+  : ARC_TESTNET_USDC_EIP712;
+
+// ---------------------------------------------------------------------------
 // In-process x402 facilitator (verify + settle on Arc Testnet)
 // ---------------------------------------------------------------------------
 const facilitator = new x402Facilitator();
@@ -92,10 +110,10 @@ const routes = {
     accepts: {
       scheme: "exact",
       network: ARC_TESTNET_CAIP2,
-      payTo: SERVICE_ADDRESS,
+      payTo: PAY_TO,
       // Arc is not in x402's default-asset table, so price is an explicit AssetAmount.
-      // `extra` is the USDC EIP-712 domain both sides need for TransferWithAuthorization.
-      price: { asset: ARC_TESTNET_USDC, amount: PRICE_BASE_UNITS, extra: ARC_TESTNET_USDC_EIP712 },
+      // `extra` is the token's EIP-712 domain both sides need for TransferWithAuthorization.
+      price: { asset: PRICE_ASSET, amount: PRICE_BASE_UNITS, extra: PRICE_ASSET_EIP712 },
       maxTimeoutSeconds: 120,
     },
     description: "Turn a plain-text business-process description into a structured automation plan.",
@@ -113,18 +131,21 @@ let chainQueue = Promise.resolve(); // serialise Deployer-wallet writes (nonce s
 resourceServer.onAfterSettle(async ({ paymentPayload, requirements, result }) => {
   if (!result.success) return;
   const payer = getAddress(result.payer ?? paymentPayload.payload?.authorization?.from);
+  const payee = getAddress(requirements.payTo);          // what was actually paid, not what we assume
   const amount = BigInt(requirements.amount);
   const memo = `POST /api/process-description x402:${result.transaction}`;
 
   const job = chainQueue.then(async () => {
     const hash = await chainClient.writeContract({
       address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "logPurchase",
-      args: [payer, SERVICE_ADDRESS, amount, memo],
+      args: [payer, payee, amount, memo],
     });
     const receipt = await chainClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") throw new Error(`logPurchase reverted: ${hash}`);
-    const count = await chainClient.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "purchaseCount" });
-    return { hash, id: count - 1n };
+    // Take the id from our own receipt — purchaseCount could have moved under concurrency.
+    const ev = parseEventLogs({ abi: spendLoggerAbi, eventName: "PurchaseLogged", logs: receipt.logs })[0];
+    if (!ev) throw new Error(`no PurchaseLogged event in ${hash}`);
+    return { hash, id: ev.args.id };
   });
   chainQueue = job.catch(() => {});
   try {
@@ -152,7 +173,8 @@ app.use((req, _res, next) => { console.log(`${new Date().toISOString()} ${req.me
 
 app.get("/health", (_req, res) => res.json({
   ok: true, network: ARC_TESTNET_CAIP2, service: SERVICE_ADDRESS, spendLogger: SPEND_LOGGER,
-  price: { asset: ARC_TESTNET_USDC, amount: PRICE_BASE_UNITS, usd: fmtUsdc(PRICE_BASE_UNITS) },
+  price: { asset: PRICE_ASSET, amount: PRICE_BASE_UNITS, usd: fmtUsdc(PRICE_BASE_UNITS) }, payTo: PAY_TO,
+  testOverrides: Boolean(TEST_ONLY_PAYTO || TEST_ONLY_ASSET),
 }));
 
 app.get("/api/ledger", async (req, res) => {
@@ -196,4 +218,7 @@ app.listen(PORT, () => {
   console.log(`  SpendLogger ${SPEND_LOGGER}  ${addressUrl(SPEND_LOGGER)}`);
   console.log(`  price       ${fmtUsdc(PRICE_BASE_UNITS)} USDC per POST /api/process-description`);
   console.log("  facilitator in-process (verify + settle signed by payTo wallet)");
+  if (TEST_ONLY_PAYTO || TEST_ONLY_ASSET) {
+    console.log("  !!! TEST-ONLY OVERRIDES ACTIVE — payTo " + PAY_TO + ", asset " + PRICE_ASSET + " (" + PRICE_ASSET_EIP712.name + ")");
+  }
 });
