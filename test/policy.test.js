@@ -50,3 +50,34 @@ describe("spend policy", () => {
     assert.equal(evaluate({ ...policy, allowedPayees: [] }, { ...offer, payTo: "0x000000000000000000000000000000000000dEaD" }, 0n).ok, true);
   });
 });
+
+import { utcDayStart, sumSpentSince } from "../shared/policy.js";
+
+describe("daily cap window (UTC midnight rollover)", () => {
+  const T = (iso) => BigInt(Math.floor(Date.parse(iso) / 1000));
+
+  it("utcDayStart is 00:00:00Z of the same UTC day, regardless of local time", () => {
+    assert.equal(utcDayStart(Date.parse("2026-09-15T23:59:59.999Z")), T("2026-09-15T00:00:00Z"));
+    assert.equal(utcDayStart(Date.parse("2026-09-16T00:00:00.000Z")), T("2026-09-16T00:00:00Z"));
+    assert.equal(utcDayStart(Date.parse("2026-09-15T00:00:00.001Z")), T("2026-09-15T00:00:00Z"));
+  });
+
+  it("purchases before midnight drop out of the window; the one at exactly midnight counts", () => {
+    const rows = [
+      { timestamp: T("2026-09-15T23:59:59Z"), amount: 10000n }, // yesterday, relative to the 16th
+      { timestamp: T("2026-09-16T00:00:00Z"), amount: 20000n }, // exactly midnight — today
+      { timestamp: T("2026-09-16T04:30:00Z"), amount: 30000n }, // today
+    ];
+    assert.equal(sumSpentSince(rows, utcDayStart(Date.parse("2026-09-16T05:00:00Z"))), 50000n);
+    assert.equal(sumSpentSince(rows, utcDayStart(Date.parse("2026-09-15T23:59:59Z"))), 60000n);
+  });
+
+  it("rollover: a cap that is exhausted at 23:59:59Z is available again at 00:00:00Z", () => {
+    const capPolicy = { ...policy, dailyCap: "20000" };
+    const rows = [{ timestamp: T("2026-09-15T22:00:00Z"), amount: 20000n }];
+    const before = sumSpentSince(rows, utcDayStart(Date.parse("2026-09-15T23:59:59Z")));
+    const after  = sumSpentSince(rows, utcDayStart(Date.parse("2026-09-16T00:00:00Z")));
+    assert.equal(evaluate(capPolicy, offer, before).rule, "dailyCap");
+    assert.equal(evaluate(capPolicy, offer, after).ok, true);
+  });
+});

@@ -19,3 +19,5 @@ typechain-types/
 .idea/
 .DS_Store
 Thumbs.db
+.cache/
+service/pending-audit.jsonl

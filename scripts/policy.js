@@ -9,9 +9,9 @@
 // Both are real transactions on Arc Testnet, gas paid in USDC by the signer.
 import "dotenv/config";
 import { readFileSync } from "node:fs";
-import { createWalletClient, http, publicActions, getAddress } from "viem";
+import { createWalletClient, publicActions, getAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { arcTestnet, ARC_TESTNET_RPC, spendLoggerAbi, txUrl } from "../shared/arc.js";
+import { arcTestnet, arcTransport, spendLoggerAbi, txUrl } from "../shared/arc.js";
 import { validatePolicy, policyHash, canonicalize } from "../shared/policy.js";
 
 const argv = process.argv.slice(2);
@@ -26,11 +26,11 @@ const SPEND_LOGGER = getAddress(deployed.arcTestnet.address);
 const policy = validatePolicy(JSON.parse(readFileSync(POLICY_PATH, "utf8")));
 const hash = policyHash(policy);
 
-const pub = createWalletClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) }).extend(publicActions);
+const pub = createWalletClient({ chain: arcTestnet, transport: arcTransport() }).extend(publicActions);
 const signer = (key, label) => {
   if (!key || key === "0x...") throw new Error(`${label} missing in .env`);
   const account = privateKeyToAccount(key);
-  return createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) }).extend(publicActions);
+  return createWalletClient({ account, chain: arcTestnet, transport: arcTransport() }).extend(publicActions);
 };
 
 const [controllerOnChain, policyOnChain] = await Promise.all([

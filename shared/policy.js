@@ -58,6 +58,21 @@ export function validatePolicy(p) {
   };
 }
 
+/** Unix seconds of 00:00:00 UTC on the day containing `nowMs`. The dailyCap window resets here. */
+export function utcDayStart(nowMs = Date.now()) {
+  return BigInt(Math.floor(nowMs / 86_400_000) * 86_400);
+}
+
+/**
+ * Sum `amount` over PurchaseLogged-style rows whose `timestamp` (unix seconds,
+ * bigint) is >= `sinceSec`. Rows at exactly `sinceSec` count as today.
+ */
+export function sumSpentSince(rows, sinceSec) {
+  let total = 0n;
+  for (const r of rows) if (BigInt(r.timestamp) >= sinceSec) total += BigInt(r.amount);
+  return total;
+}
+
 /**
  * Decide whether a payment offer is allowed under the policy.
  * @param {SpendPolicy} policy

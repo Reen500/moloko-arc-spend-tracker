@@ -1,7 +1,7 @@
 // Shared Arc Testnet constants for the service and the agent.
 // Every value here is TESTNET and comes from https://docs.arc.io — do not
 // add mainnet values to this file.
-import { defineChain, parseAbi } from "viem";
+import { defineChain, parseAbi, http } from "viem";
 
 export const ARC_TESTNET_CHAIN_ID = 5042002;
 export const ARC_TESTNET_CAIP2 = `eip155:${ARC_TESTNET_CHAIN_ID}`;
@@ -28,6 +28,17 @@ export const arcTestnet = defineChain({
   rpcUrls: { default: { http: [ARC_TESTNET_RPC], webSocket: ["wss://rpc.testnet.arc.io"] } },
   blockExplorers: { default: { name: "ArcScan", url: ARC_TESTNET_EXPLORER } },
 });
+
+/**
+ * HTTP transport for Arc Testnet with a backoff that survives the public RPC's
+ * rate limit (JSON-RPC -32005 "rate limit exceeded", seen at ~16 concurrent
+ * eth_getLogs from one IP). viem retries -32005 by default but only 3× at
+ * 150 ms; a burst of concurrent agents needs more headroom. Delays are
+ * 400 ms · 2^attempt: 0.4, 0.8, 1.6, 3.2, 6.4, 12.8 s.
+ * For production use a keyed provider (Alchemy / QuickNode / dRPC — all listed
+ * in the Arc docs) via ARC_TESTNET_RPC.
+ */
+export const arcTransport = (url = ARC_TESTNET_RPC) => http(url, { retryCount: 6, retryDelay: 400, timeout: 30_000 });
 
 /** Minimal SpendLogger v2 ABI — mirrors contracts/SpendLogger.sol. */
 export const spendLoggerAbi = parseAbi([

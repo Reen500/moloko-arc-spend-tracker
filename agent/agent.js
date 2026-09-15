@@ -17,17 +17,17 @@
 // ever produced. The policy's hash must match what the controller committed
 // on-chain (SpendLogger.policyOf); the agent refuses to run if it doesn't.
 import { config as loadEnv } from "dotenv";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { wrapFetchWithPayment, decodePaymentResponseHeader } from "@x402/fetch";
 import { x402Client } from "@x402/core/client";
 import { ExactEvmScheme } from "@x402/evm";
-import { createWalletClient, http, publicActions, getAddress, keccak256, toHex } from "viem";
+import { createWalletClient, publicActions, getAddress, keccak256, toHex, nonceManager } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
-  arcTestnet, ARC_TESTNET_CAIP2, ARC_TESTNET_RPC, ARC_TESTNET_USDC,
+  arcTestnet, ARC_TESTNET_CAIP2, ARC_TESTNET_USDC, arcTransport,
   spendLoggerAbi, usdcAbi, txUrl, addressUrl, fmtUsdc,
 } from "../shared/arc.js";
-import { validatePolicy, policyHash, evaluate } from "../shared/policy.js";
+import { validatePolicy, policyHash, evaluate, utcDayStart, sumSpentSince } from "../shared/policy.js";
 
 loadEnv({ path: new URL("../.env", import.meta.url) });
 
@@ -57,8 +57,8 @@ const AGENT_PRIVATE_KEY = process.env.AGENT_PRIVATE_KEY;
 if (!AGENT_PRIVATE_KEY || AGENT_PRIVATE_KEY === "0x...") {
   throw new Error("AGENT_PRIVATE_KEY missing in .env (Arc-Agent wallet; see SETUP.md Part B).");
 }
-const account = privateKeyToAccount(AGENT_PRIVATE_KEY);
-const chain = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) }).extend(publicActions);
+const account = privateKeyToAccount(AGENT_PRIVATE_KEY, { nonceManager });
+const chain = createWalletClient({ account, chain: arcTestnet, transport: arcTransport() }).extend(publicActions);
 
 function resolveSpendLogger() {
   if (process.env.SPEND_LOGGER_ADDRESS) return getAddress(process.env.SPEND_LOGGER_ADDRESS);
@@ -107,14 +107,38 @@ if (onChainPolicyHash !== localPolicyHash) {
 }
 console.log("  policy      ✓ matches on-chain commitment");
 
-// Daily spend so far: sum PurchaseLogged amounts for this agent since 00:00 UTC.
+// Daily spend so far: sum PurchaseLogged amounts for this agent since the start
+// of the current UTC day. The day boundary is a pure function (shared/policy.js)
+// so the rollover is unit-tested; the block at that boundary is found by binary
+// search on block timestamps rather than guessed from an assumed block time.
+const DAY_START_OVERRIDE = flag("--day-start", null); // TEST ONLY: ISO time to treat as "start of today"
+if (DAY_START_OVERRIDE) console.log(`  !!! --day-start override active: counting spend since ${DAY_START_OVERRIDE}`);
+
+async function blockAtOrAfter(tsSec, latest) {
+  let lo = 0n, hi = latest.number;
+  if (latest.timestamp < tsSec) return latest.number + 1n;
+  while (lo < hi) {
+    const mid = (lo + hi) / 2n;
+    const b = await chain.getBlock({ blockNumber: mid });
+    if (b.timestamp < tsSec) lo = mid + 1n; else hi = mid;
+  }
+  return lo;
+}
+
+const CACHE_DIR = new URL("../.cache/", import.meta.url);
+async function dayStartBlock(dayStart, latest) {
+  const file = new URL(`daystart-${dayStart}.json`, CACHE_DIR);
+  try { return BigInt(JSON.parse(readFileSync(file, "utf8")).block); } catch { /* not cached */ }
+  const block = await blockAtOrAfter(dayStart, latest);
+  try { mkdirSync(CACHE_DIR, { recursive: true }); writeFileSync(file, JSON.stringify({ dayStart: dayStart.toString(), block: block.toString() })); } catch { /* best effort */ }
+  return block;
+}
+
 async function spentTodayBaseUnits() {
   const latest = await chain.getBlock();
-  const midnight = BigInt(Math.floor(Date.now() / 86_400_000) * 86_400);
-  const secondsBack = Number(latest.timestamp - midnight);
-  let fromBlock = latest.number - BigInt(Math.ceil(secondsBack / 0.5) + 200); // ~0.5-0.6 s blocks, generous margin
-  if (fromBlock < 0n) fromBlock = 0n;
-  // Arc's public RPC caps eth_getLogs at ~20k blocks per call; a full UTC day is ~150k. Chunk it.
+  const dayStart = DAY_START_OVERRIDE ? BigInt(Math.floor(Date.parse(DAY_START_OVERRIDE) / 1000)) : utcDayStart();
+  const fromBlock = await dayStartBlock(dayStart, latest);
+  // Arc public RPC caps eth_getLogs at ~20k blocks per call; a full UTC day is ~150k. Chunk it.
   const CHUNK = 10_000n;
   const logs = [];
   for (let start = fromBlock; start <= latest.number; start += CHUNK + 1n) {
@@ -124,13 +148,16 @@ async function spentTodayBaseUnits() {
       args: { agent: account.address }, fromBlock: start, toBlock: end,
     }));
   }
-  return logs.filter((l) => l.args.timestamp >= midnight).reduce((s, l) => s + l.args.amount, 0n);
+  return sumSpentSince(logs.map((l) => l.args), dayStart);
 }
 
 // ---------------------------------------------------------------------------
 // x402 client with the policy gate installed before signing
 // ---------------------------------------------------------------------------
 let refusals = 0;
+// Daily spend is read from chain once per run (a chunked eth_getLogs scan) and
+// then tracked locally as calls succeed — one scan per process, not per call.
+let spentToday = null;
 const client = x402Client.fromConfig({
   schemes: [{ network: ARC_TESTNET_CAIP2, client: new ExactEvmScheme(account) }],
   // Arc USDC is not in x402's default-asset table; allow it. No cap here on
@@ -142,7 +169,17 @@ const client = x402Client.fromConfig({
   },
 })
   .onBeforePaymentCreation(async ({ selectedRequirements: offer }) => {
-    const spentToday = await spentTodayBaseUnits();
+    // Fail closed: if the chain can't be read (RPC outage / rate limit) we
+    // cannot evaluate the daily cap, so we do not sign.
+    if (spentToday === null) {
+      try { spentToday = await spentTodayBaseUnits(); }
+      catch (err) {
+        refusals++;
+        console.log(`  ✗ REFUSED — policy check unavailable: ${(err.shortMessage ?? err.message).split("\n")[0]}`);
+        console.log(`    (fail closed: no signature produced, no transaction sent; retry later or use a keyed RPC)`);
+        return { abort: true, reason: "policy check unavailable" };
+      }
+    }
     const verdict = evaluate(policy, offer, spentToday);
     if (!verdict.ok) {
       refusals++;
@@ -234,12 +271,18 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
     // A paid request that the handler rejected. x402 cancels settlement on a
     // 4xx/5xx, so no USDC should have moved — the on-chain check below proves it.
     console.log(`  ✗ HTTP ${res.status} after payment header was sent: ${JSON.stringify(body)}`);
-    console.log(`    PAYMENT-RESPONSE header present: ${res.headers.has("PAYMENT-RESPONSE")}`);
-    results.push({ settlement: null, logTx: null, logId: null, outcomeTx: null, rejected: res.status });
+    // The PAYMENT-RESPONSE header is the authoritative answer to "was I charged?":
+    // success:false means the facilitator did not settle (no transfer happened).
+    let pr = null;
+    try { pr = res.headers.has("PAYMENT-RESPONSE") ? decodePaymentResponseHeader(res.headers.get("PAYMENT-RESPONSE")) : null; } catch { /* unreadable */ }
+    if (pr) console.log(`    PAYMENT-RESPONSE: success=${pr.success} reason=${pr.errorReason ?? "-"} tx=${pr.transaction || "(none)"}${pr.success ? "  !! charged but no result" : "  → not charged"}`);
+    else console.log(`    no PAYMENT-RESPONSE header → settlement never happened, not charged`);
+    results.push({ settlement: null, logTx: null, logId: null, outcomeTx: null, rejected: res.status, paymentResponse: pr });
     continue;
   }
 
   const settlement = decodePaymentResponseHeader(res.headers.get("PAYMENT-RESPONSE"));
+  if (spentToday !== null) spentToday += BigInt(offer.amount);
   const logTx = res.headers.get("X-Spend-Log-Tx");
   const logId = res.headers.get("X-Spend-Log-Id");
   const r = { settlement, logTx, logId, outcomeTx: null };
@@ -248,7 +291,8 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
   console.log(`  ✓ 200 in ${(ms / 1000).toFixed(1)}s`);
   console.log(`  plan     ${body.plan.process_name} — ${body.plan.summary}`);
   console.log(`  paid     ${settlement.transaction}  ${txUrl(settlement.transaction)}`);
-  console.log(`  logged   ${logTx ?? "(header missing)"}  ${logTx ? txUrl(logTx) : ""}  purchase #${logId ?? "?"}`);
+  if (res.headers.get("X-Spend-Log-Pending")) console.log(`  logged   (deferred — service queued the audit entry for replay)`);
+  else console.log(`  logged   ${logTx ?? "(header missing)"}  ${logTx ? txUrl(logTx) : ""}  purchase #${logId ?? "?"}`);
 
   // Don't trust the service's ledger entry: it must match what we actually paid.
   if (logId != null) {
@@ -278,11 +322,26 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
   if (RECORD_OUTCOME && logId != null) {
     const { score, reason } = scorePlan(body.plan, description);
     const reasonHash = keccak256(toHex(reason));
-    const hash = await chain.writeContract({
-      address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "recordOutcome",
-      args: [BigInt(logId), score, reasonHash],
-    });
-    await chain.waitForTransactionReceipt({ hash });
+    // Several agent processes may share this key (as in concurrency-trial.js);
+    // nonceManager only coordinates within one process, so retry on a collision.
+    let hash;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        hash = await chain.writeContract({
+          address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "recordOutcome",
+          args: [BigInt(logId), score, reasonHash],
+          nonce: attempt === 1 ? undefined : await chain.getTransactionCount({ address: account.address, blockTag: "pending" }),
+        });
+        await chain.waitForTransactionReceipt({ hash, timeout: 60_000 });
+        break;
+      } catch (err) {
+        const transient = /nonce|already known|replacement|underpriced|could not be found|rate limit|exceeds defined limit|timeout/i.test(err.message);
+        if (!transient || attempt >= 5) throw err;
+        const brief = (err.shortMessage ?? err.message).split("\n")[0].slice(0, 60);
+        console.log(`  … outcome tx attempt ${attempt} failed (${brief}), retrying`);
+        await sleep(1000 * 2 ** attempt);
+      }
+    }
     r.outcomeTx = hash;
     console.log(`  rated    ${score}/5 "${reason}"`);
     console.log(`           ${hash}  ${txUrl(hash)}`);
@@ -292,15 +351,16 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
 // ---------------------------------------------------------------------------
 // Verify independently on-chain (don't just trust the service's headers)
 // ---------------------------------------------------------------------------
-if (results.length) {
+if (results.length) try {
   const balanceAfter = await usdcBalance(account.address);
   console.log(`\n── on-chain check ────────────────────────────────────────────`);
   const paidCalls = results.filter((x) => x.settlement).length;
   const rejectedAfterPay = results.filter((x) => x.rejected).length;
   console.log(`  USDC spent by agent : ${fmtUsdc(balanceBefore - balanceAfter)} (${paidCalls} paid call(s), ${rejectedAfterPay} rejected-after-payment-header, ${refusals} refused; includes outcome gas)`);
-  if (rejectedAfterPay && paidCalls === 0) {
-    console.log(`  handler rejected the paid request: USDC delta ${balanceBefore - balanceAfter} base units → ${balanceBefore === balanceAfter ? "✓ NOT charged" : "!! CHARGED despite rejection"}`);
-  }
+  console.log(`  (balance delta is only meaningful if no other process is using this wallet; scripts/reconcile.js is authoritative)`);
+  const chargedNoResult = results.filter((x) => x.rejected && x.paymentResponse?.success);
+  if (chargedNoResult.length) console.log(`  !! ${chargedNoResult.length} call(s) settled on-chain but the client got an error — investigate`);
+  else if (rejectedAfterPay) console.log(`  rejected-after-payment calls: PAYMENT-RESPONSE says not settled → ✓ not charged`);
   const last = results.filter((x) => x.settlement).at(-1) ?? results.at(-1);
   if (last.logId != null) {
     const p = await chain.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "getPurchase", args: [BigInt(last.logId)] });
@@ -314,6 +374,8 @@ if (results.length) {
   const count = await chain.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "purchaseCount" });
   console.log(`  SpendLogger.purchaseCount = ${count}`);
   console.log(`\n  agent wallet  ${addressUrl(account.address)}`);
+} catch (err) {
+  console.log(`  (on-chain verification skipped: ${(err.shortMessage ?? err.message).split("\n")[0]} — run scripts/reconcile.js)`);
 } else if (!DRY_RUN) {
   console.log(`\nNo paid calls made (${refusals} refused by policy).`);
 }

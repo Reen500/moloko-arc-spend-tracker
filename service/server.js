@@ -13,7 +13,7 @@
 //   4. After settlement, the service calls SpendLogger.logPurchase().
 //   5. 200 + plan JSON. Headers carry both tx hashes.
 import { config as loadEnv } from "dotenv";
-import { readFileSync } from "node:fs";
+import { readFileSync, appendFileSync } from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import express from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
@@ -21,10 +21,10 @@ import { ExactEvmScheme as ExactEvmServerScheme } from "@x402/evm/exact/server";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { registerExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { toFacilitatorEvmSigner } from "@x402/evm";
-import { createWalletClient, http, publicActions, getAddress, parseEventLogs } from "viem";
+import { createWalletClient, publicActions, getAddress, parseEventLogs, nonceManager } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
-  arcTestnet, ARC_TESTNET_CAIP2, ARC_TESTNET_RPC, ARC_TESTNET_USDC, ARC_TESTNET_USDC_EIP712,
+  arcTestnet, ARC_TESTNET_CAIP2, ARC_TESTNET_USDC, ARC_TESTNET_USDC_EIP712, arcTransport,
   spendLoggerAbi, txUrl, addressUrl, fmtUsdc,
 } from "../shared/arc.js";
 import { generatePlan } from "./plan.js";
@@ -56,8 +56,11 @@ const SPEND_LOGGER = resolveSpendLoggerAddress();
 // Chain clients — one wallet (Arc-Deployer) does everything on the service side:
 // receives USDC, settles the EIP-3009 authorization, and reports to SpendLogger.
 // ---------------------------------------------------------------------------
-const account = privateKeyToAccount(DEPLOYER_PRIVATE_KEY);
-const chainClient = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) })
+// nonceManager: settlement and logPurchase writes can be in flight at the same
+// time under concurrent requests; without local nonce tracking they collide and
+// one of them is silently replaced (seen in testing: 2/4 concurrent calls failed).
+const account = privateKeyToAccount(DEPLOYER_PRIVATE_KEY, { nonceManager });
+const chainClient = createWalletClient({ account, chain: arcTestnet, transport: arcTransport() })
   .extend(publicActions);
 const SERVICE_ADDRESS = account.address;
 
@@ -84,11 +87,15 @@ const PRICE_ASSET_EIP712 = TEST_ONLY_ASSET
 // ---------------------------------------------------------------------------
 const facilitator = new x402Facilitator();
 registerExactEvmScheme(facilitator, {
-  signer: toFacilitatorEvmSigner({ ...chainClient, address: SERVICE_ADDRESS }),
+  // 60 s receipt wait: Arc blocks are ~0.6 s, so a settlement not mined in a
+  // minute is dead; failing fast beats holding the client connection open.
+  signer: toFacilitatorEvmSigner({ ...chainClient, address: SERVICE_ADDRESS }, { confirmationTimeoutMs: 60_000 }),
   networks: ARC_TESTNET_CAIP2,
 });
 facilitator
-  .onAfterSettle(async ({ result }) => console.log(`  ↳ settled  ${result.transaction}  ${txUrl(result.transaction)}`))
+  .onAfterSettle(async ({ result }) => result.success
+    ? console.log(`  ↳ settled  ${result.transaction}  ${txUrl(result.transaction)}`)
+    : console.warn(`  ↳ settle REJECTED (${result.errorReason ?? "unknown"}): ${result.errorMessage ?? ""} — client gets 402, nothing charged`))
   .onSettleFailure(async ({ error }) => console.error("  ↳ settle FAILED:", error.message));
 
 // x402ResourceServer expects a FacilitatorClient (verify / settle / getSupported).
@@ -128,25 +135,44 @@ const routes = {
 const reqStore = new AsyncLocalStorage();
 let chainQueue = Promise.resolve(); // serialise Deployer-wallet writes (nonce safety)
 
+// Audit writes must not be lost. Retry through RPC throttling; if the chain is
+// still unreachable, persist the entry to pending-audit.jsonl for replay
+// (scripts/replay-audit.js) and surface the backlog on /health.
+const PENDING_AUDIT = new URL("./pending-audit.jsonl", import.meta.url);
+let pendingAuditCount = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isTransientRpc = (e) => /rate limit|exceeds defined limit|LimitExceeded|timeout|ECONNRESET|fetch failed|nonce|already known|replacement/i.test(e?.message ?? "");
+
+async function writeAuditEntry(entry) {
+  const { payer, payee, amount, memo } = entry;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const hash = await chainClient.writeContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "logPurchase", args: [payer, payee, amount, memo] });
+      const receipt = await chainClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
+      if (receipt.status !== "success") throw new Error(`logPurchase reverted: ${hash}`);
+      const ev = parseEventLogs({ abi: spendLoggerAbi, eventName: "PurchaseLogged", logs: receipt.logs })[0];
+      if (!ev) throw new Error(`no PurchaseLogged event in ${hash}`);
+      return { hash, id: ev.args.id };
+    } catch (err) {
+      if (!isTransientRpc(err) || attempt >= 5) throw err;
+      const wait = 1000 * 2 ** attempt; // 2, 4, 8, 16 s
+      const brief = (err.shortMessage ?? err.message).split("\n")[0];
+      console.warn(`  ↳ logPurchase attempt ${attempt} failed (${brief}); retrying in ${wait / 1000}s`);
+      await sleep(wait);
+    }
+  }
+}
+
 resourceServer.onAfterSettle(async ({ paymentPayload, requirements, result }) => {
   if (!result.success) return;
+  if (!result.transaction) { console.error("  ↳ settle reported success with no tx hash — not logging"); return; }
   const payer = getAddress(result.payer ?? paymentPayload.payload?.authorization?.from);
   const payee = getAddress(requirements.payTo);          // what was actually paid, not what we assume
   const amount = BigInt(requirements.amount);
   const memo = `POST /api/process-description x402:${result.transaction}`;
 
-  const job = chainQueue.then(async () => {
-    const hash = await chainClient.writeContract({
-      address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "logPurchase",
-      args: [payer, payee, amount, memo],
-    });
-    const receipt = await chainClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== "success") throw new Error(`logPurchase reverted: ${hash}`);
-    // Take the id from our own receipt — purchaseCount could have moved under concurrency.
-    const ev = parseEventLogs({ abi: spendLoggerAbi, eventName: "PurchaseLogged", logs: receipt.logs })[0];
-    if (!ev) throw new Error(`no PurchaseLogged event in ${hash}`);
-    return { hash, id: ev.args.id };
-  });
+  const entry = { payer, payee, amount: amount.toString(), memo, settlementTx: result.transaction, at: new Date().toISOString() };
+  const job = chainQueue.then(() => writeAuditEntry({ ...entry, amount }));
   chainQueue = job.catch(() => {});
   try {
     const { hash, id } = await job;
@@ -158,8 +184,18 @@ resourceServer.onAfterSettle(async ({ paymentPayload, requirements, result }) =>
       res.setHeader("X-Spend-Log-Contract", SPEND_LOGGER);
     }
   } catch (err) {
-    // Payment already settled; do not fail the caller because the audit write hiccupped.
-    console.error("  ↳ logPurchase FAILED:", err.message);
+    // Payment already settled; the caller still gets its result. The audit
+    // entry is persisted and replayed later so the ledger never silently gaps.
+    console.error("  ↳ logPurchase FAILED after retries:", (err.shortMessage ?? err.message).split("\n")[0]);
+    try {
+      appendFileSync(PENDING_AUDIT, JSON.stringify(entry) + "\n");
+      pendingAuditCount++;
+      console.error(`  ↳ queued to pending-audit.jsonl (${pendingAuditCount} pending) — run scripts/replay-audit.js`);
+    } catch (e) {
+      console.error("  ↳ COULD NOT PERSIST PENDING AUDIT:", e.message, JSON.stringify(entry));
+    }
+    const res = reqStore.getStore()?.res;
+    if (res && !res.headersSent) res.setHeader("X-Spend-Log-Pending", "1");
   }
 });
 
@@ -175,6 +211,7 @@ app.get("/health", (_req, res) => res.json({
   ok: true, network: ARC_TESTNET_CAIP2, service: SERVICE_ADDRESS, spendLogger: SPEND_LOGGER,
   price: { asset: PRICE_ASSET, amount: PRICE_BASE_UNITS, usd: fmtUsdc(PRICE_BASE_UNITS) }, payTo: PAY_TO,
   testOverrides: Boolean(TEST_ONLY_PAYTO || TEST_ONLY_ASSET),
+  pendingAudit: pendingAuditCount,
 }));
 
 app.get("/api/ledger", async (req, res) => {
