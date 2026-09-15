@@ -121,8 +121,16 @@ async function spentTodayBaseUnits() {
 // x402 client with the policy gate installed before signing
 // ---------------------------------------------------------------------------
 let refusals = 0;
-const client = new x402Client()
-  .register(ARC_TESTNET_CAIP2, new ExactEvmScheme(account))
+const client = x402Client.fromConfig({
+  schemes: [{ network: ARC_TESTNET_CAIP2, client: new ExactEvmScheme(account) }],
+  // Arc USDC is not in x402's default-asset table; allow it. No cap here on
+  // purpose: the policy hook below is the single authority (it enforces
+  // maxPerCall, dailyCap, payee, asset and network), so refusals always
+  // report which policy rule fired.
+  spendControls: {
+    allowedAssets: [{ network: policy.network, asset: policy.asset }],
+  },
+})
   .onBeforePaymentCreation(async ({ selectedRequirements: offer }) => {
     const spentToday = await spentTodayBaseUnits();
     const verdict = evaluate(policy, offer, spentToday);
@@ -187,7 +195,13 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ description }),
     });
   } catch (err) {
-    if (/Payment creation aborted/.test(err.message)) { console.log(`  → call skipped: ${err.message}`); continue; }
+    if (/Payment creation aborted/.test(err.message)) { console.log(`  → call skipped, nothing paid`); continue; }
+    if (/Failed to create payment payload/.test(err.message)) {
+      refusals++;
+      console.log(`  ✗ REFUSED by x402 spend controls: ${err.message.split(":").slice(1).join(":").trim()}`);
+      console.log(`    (no signature produced, no transaction sent)`);
+      continue;
+    }
     throw err;
   }
   const ms = Date.now() - t0;

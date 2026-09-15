@@ -3,6 +3,32 @@
     "network": "arcTestnet",
     "chainId": 5042002,
     "contract": "SpendLogger",
+    "address": "0xD0238CFb58186eC0735de147eB83E4c66F28b94f",
+    "deployer": "0x52df4736c94ba91cf7d49b84b642089f85a47c77",
+    "txHash": "0xd1d43e6f99bd21a16bae9231ca6d2b72ca1b39d98d24e30f36d38ed56e00dc1e",
+    "blockNumber": 62170911,
+    "gasUsed": "1144141",
+    "deployedAt": "2026-09-15T03:39:37.504Z",
+    "explorer": {
+      "contract": "https://testnet.arcscan.app/address/0xD0238CFb58186eC0735de147eB83E4c66F28b94f",
+      "tx": "https://testnet.arcscan.app/tx/0xd1d43e6f99bd21a16bae9231ca6d2b72ca1b39d98d24e30f36d38ed56e00dc1e",
+      "code": "https://testnet.arcscan.app/address/0xD0238CFb58186eC0735de147eB83E4c66F28b94f#code"
+    },
+    "verified": true,
+    "version": "v2",
+    "policy": {
+      "agent": "0xaAf714460A9FbEc7C3f0618cf04E84938b86DC8D",
+      "controller": "0x52DF4736C94BA91cf7d49b84b642089F85A47C77",
+      "policyFile": "policies/arc-agent.json",
+      "policyHash": "0x569b59c8ee16d855296e81b63d445b3a9ded50cf51c7636f32c75b2bec255031",
+      "bindTx": "0x6a2de98baffbdd7b0b6575404ec20090af2a34b30d947f778f2f595221bf9318",
+      "setPolicyTx": "0x664660fca512b906312c7c87644c4d44d0b086101284a04ff56b715c692e72ce"
+    }
+  },
+  "arcTestnet_v1": {
+    "network": "arcTestnet",
+    "chainId": 5042002,
+    "contract": "SpendLogger",
     "address": "0x683D3D53a86359132ed19BD9270033f31c647f83",
     "deployer": "0x52df4736c94ba91cf7d49b84b642089f85a47c77",
     "txHash": "0xf041afee453f41cf227635cd7a938da25aa27094f9172db6fbe935cdd2215343",
@@ -14,6 +40,7 @@
       "tx": "https://testnet.arcscan.app/tx/0xf041afee453f41cf227635cd7a938da25aa27094f9172db6fbe935cdd2215343",
       "code": "https://testnet.arcscan.app/address/0x683D3D53a86359132ed19BD9270033f31c647f83#code"
     },
-    "verified": true
+    "verified": true,
+    "note": "v1 — ledger only. Superseded by v2 (arcTestnet) but history stays live."
   }
 }
