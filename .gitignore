@@ -21,3 +21,4 @@ typechain-types/
 Thumbs.db
 .cache/
 service/pending-audit.jsonl
+exports/
