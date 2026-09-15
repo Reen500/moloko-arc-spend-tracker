@@ -40,6 +40,7 @@ const CALLS = Number(flag("--calls", 1));
 const DRY_RUN = argv.includes("--dry-run");
 const RECORD_OUTCOME = !argv.includes("--no-outcome");
 const POLICY_PATH = String(flag("--policy", "policies/arc-agent.json"));
+const PROCESS_OFFSET = Number(flag("--process", 0)); // which sample process to start from
 const DELAY = String(flag("--delay", "0"));
 const [DELAY_MIN, DELAY_MAX] = DELAY.split("-").map(Number).concat([NaN]).slice(0, 2);
 const nextDelayMs = () => {
@@ -109,11 +110,18 @@ async function spentTodayBaseUnits() {
   const latest = await chain.getBlock();
   const midnight = BigInt(Math.floor(Date.now() / 86_400_000) * 86_400);
   const secondsBack = Number(latest.timestamp - midnight);
-  const fromBlock = latest.number - BigInt(Math.ceil(secondsBack / 0.5) + 200); // ~0.5-0.6 s blocks, generous margin
-  const logs = await chain.getContractEvents({
-    address: SPEND_LOGGER, abi: spendLoggerAbi, eventName: "PurchaseLogged",
-    args: { agent: account.address }, fromBlock: fromBlock < 0n ? 0n : fromBlock, toBlock: latest.number,
-  });
+  let fromBlock = latest.number - BigInt(Math.ceil(secondsBack / 0.5) + 200); // ~0.5-0.6 s blocks, generous margin
+  if (fromBlock < 0n) fromBlock = 0n;
+  // Arc's public RPC caps eth_getLogs at ~20k blocks per call; a full UTC day is ~150k. Chunk it.
+  const CHUNK = 10_000n;
+  const logs = [];
+  for (let start = fromBlock; start <= latest.number; start += CHUNK + 1n) {
+    const end = start + CHUNK > latest.number ? latest.number : start + CHUNK;
+    logs.push(...await chain.getContractEvents({
+      address: SPEND_LOGGER, abi: spendLoggerAbi, eventName: "PurchaseLogged",
+      args: { agent: account.address }, fromBlock: start, toBlock: end,
+    }));
+  }
   return logs.filter((l) => l.args.timestamp >= midnight).reduce((s, l) => s + l.args.amount, 0n);
 }
 
@@ -185,7 +193,7 @@ for (let i = 0; i < (DRY_RUN ? 0 : CALLS); i++) {
     console.log(`\n  … waiting ${(ms / 1000).toFixed(0)}s before next call (--delay ${DELAY})`);
     await sleep(ms);
   }
-  const description = PROCESSES[i % PROCESSES.length];
+  const description = PROCESSES[(PROCESS_OFFSET + i) % PROCESSES.length];
   console.log(`\n── call ${i + 1}/${CALLS} ─────────────────────────────────────────────`);
   console.log(`  process: "${description.slice(0, 70)}…"`);
   const t0 = Date.now();
