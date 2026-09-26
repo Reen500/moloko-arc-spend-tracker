@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Spend Ledger · Arc</title>
+<meta name="description" content="Every purchase an AI agent made from this x402 service, as recorded on Arc: the policy it was bound by, the USDC it paid, and its own rating.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231c2029'/%3E%3Cpath d='M8 11h16M8 16h16M8 21h10' stroke='%23f5f2ea' stroke-width='2.5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f5f2ea; --card: #fbf9f4; --ink: #1c2029; --muted: #5d6270; --rule: #ddd6c6; --rule-strong: #b9b09c;
+    --ok: #1e6a4c; --ok-bg: #e2efe7; --warn: #8a5a12; --warn-bg: #f5ead6; --link: #294a94;
+    --serif: "Newsreader", Georgia, serif; --sans: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #13161c; --card: #191d25; --ink: #e8e4da; --muted: #9ba1ae; --rule: #2b303b; --rule-strong: #434a58;
+      --ok: #6cc79d; --ok-bg: #1b2e25; --warn: #e0b36a; --warn-bg: #33291a; --link: #93b1f0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 var(--sans); }
+  a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 16px 64px; }
+  .mono { font-family: var(--mono); font-size: 0.92em; }
+  .muted { color: var(--muted); }
+
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 20px; margin-bottom: 28px; }
+  .eyebrow { font: 500 12px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .live { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); }
+  .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .live.down { color: var(--warn); }
+  h1 { font: 600 clamp(30px, 5vw, 44px)/1.08 var(--serif); margin: 14px 0 12px; letter-spacing: -0.01em; }
+  .lede { max-width: 680px; margin: 0; color: var(--muted); font-size: 16px; }
+
+  .totals { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--rule); background: var(--card); margin-bottom: 28px; }
+  .totals > div { padding: 16px 18px; border-left: 1px solid var(--rule); }
+  .totals > div:first-child { border-left: 0; }
+  .totals .label { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .totals .value { font: 500 26px/1.2 var(--mono); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .totals .note { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+
+  h2 { font: 600 22px/1.2 var(--serif); margin: 0 0 12px; }
+  section { margin-bottom: 36px; }
+
+  .policy { display: grid; grid-template-columns: 1.1fr 1fr; gap: 0; border: 1px solid var(--rule); background: var(--card); }
+  .policy > div { padding: 18px; }
+  .policy > div + div { border-left: 1px solid var(--rule); }
+  .rules { list-style: none; margin: 0; padding: 0; }
+  .rules li { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px dashed var(--rule); }
+  .rules li:last-child { border-bottom: 0; }
+  .rules b { font-weight: 500; font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .badge { display: inline-block; padding: 2px 8px; font: 500 12px/1.5 var(--sans); border-radius: 3px; background: var(--ok-bg); color: var(--ok); white-space: nowrap; }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--rule); background: var(--card); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font: 500 11.5px/1.2 var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); padding: 12px 14px; border-bottom: 1px solid var(--rule-strong); white-space: nowrap; }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--rule); vertical-align: middle; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+  .score { font-family: var(--mono); }
+  .score i { font-style: normal; color: var(--rule-strong); }
+  .empty { padding: 28px; text-align: center; color: var(--muted); }
+
+  .verify { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .verify > div { border-top: 2px solid var(--ink); padding-top: 12px; }
+  .verify h3 { font: 600 15px/1.3 var(--sans); margin: 0 0 6px; }
+  .verify p { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+  pre { margin: 0; padding: 10px 12px; background: var(--card); border: 1px solid var(--rule); overflow-x: auto; font: 12.5px/1.5 var(--mono); }
+
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+  @media (max-width: 760px) {
+    .wrap { padding-top: 28px; }
+    .totals { grid-template-columns: 1fr 1fr; }
+    .totals > div:nth-child(3) { border-left: 0; }
+    .totals > div:nth-child(n+3) { border-top: 1px solid var(--rule); }
+    .policy { grid-template-columns: 1fr; }
+    .policy > div + div { border-left: 0; border-top: 1px solid var(--rule); }
+    .verify { grid-template-columns: 1fr; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">
+      <span>Moloko Labs · Arc Spend Tracker</span>
+      <span id="status" class="live">connecting</span>
+    </div>
+    <h1>Agent spend ledger</h1>
+    <p class="lede">Every purchase an AI agent has made from this service, read live from the <span id="contract-link">SpendLogger contract</span> on <span id="network-name">Arc</span>: what it paid in USDC, the spending policy it was bound by, and its own rating of what it got.</p>
+  </header>
+
+  <div class="totals" aria-live="polite">
+    <div><div class="label">Purchases</div><div class="value" id="t-count">—</div><div class="note" id="t-count-note">logged on-chain</div></div>
+    <div><div class="label">Spent</div><div class="value" id="t-spent">—</div><div class="note" id="t-spent-note">USDC</div></div>
+    <div><div class="label">Avg. rating</div><div class="value" id="t-score">—</div><div class="note" id="t-score-note">by the buying agent, 0–5</div></div>
+    <div><div class="label">Within policy</div><div class="value" id="t-policy">—</div><div class="note">carry the committed policy hash</div></div>
+  </div>
+
+  <section>
+    <h2>The rules the agent is bound by</h2>
+    <div class="policy">
+      <div>
+        <ul class="rules" id="rules"><li class="muted">Loading policy…</li></ul>
+      </div>
+      <div>
+        <dl class="kv" id="policy-meta"></dl>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Purchases</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>When (UTC)</th><th class="hide-sm">Agent</th><th class="num">Amount</th>
+            <th>Payment tx</th><th>Policy</th><th>Rating</th><th class="hide-sm">Reported by</th>
+          </tr>
+        </thead>
+        <tbody id="rows"><tr><td colspan="8" class="empty">Reading the chain…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="muted" id="rows-note" style="font-size:13px;margin:8px 0 0"></p>
+  </section>
+
+  <section>
+    <h2>Check it yourself</h2>
+    <div class="verify">
+      <div>
+        <h3>On the explorer</h3>
+        <p>Each row is a <span class="mono">PurchaseLogged</span> event. Payment links open the USDC transfer the entry refers to.</p>
+        <p><a id="logs-link" href="#">Contract event log →</a></p>
+      </div>
+      <div>
+        <h3>Reconcile</h3>
+        <p>Match every USDC payment by the agent to exactly one ledger entry, then export for Xero or QuickBooks.</p>
+        <pre>node scripts/reconcile.js --network arcMainnet</pre>
+      </div>
+      <div>
+        <h3>Buy something</h3>
+        <p>One call costs $0.01 over x402. The service settles on-chain and logs your purchase here.</p>
+        <pre id="call-cmd">POST /api/process-description</pre>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Open source (MIT): <a href="https://github.com/Reen500/moloko-arc-spend-tracker">Reen500/moloko-arc-spend-tracker</a></span>
+    <span id="updated">—</span>
+  </footer>
+</div>
+
+<script>
+// Everything shown comes from the chain via this service. SpendLogger.logPurchase
+// is permissionless, so memo/agent/etc. are untrusted: text goes in with
+// textContent, and links are only built from values that validate as hex.
+const $ = (id) => document.getElementById(id);
+const isAddr = (v) => typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v);
+const isHash = (v) => typeof v === "string" && /^0x[0-9a-fA-F]{64}$/.test(v);
+const short = (v) => v.slice(0, 6) + "…" + v.slice(-4);
+// Dollars with at least cents: $0.50, $0.12, $0.012803.
+const usd = (base) => {
+  const [i, d = ""] = (Number(base) / 1e6).toFixed(6).replace(/0+$/, "").split(".");
+  return "$" + i + "." + d.padEnd(2, "0");
+};
+let EXPLORER = "";
+
+function el(tag, attrs = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === "class") n.className = v; else n.setAttribute(k, v); }
+  for (const k of kids) n.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return n;
+}
+function link(kind, value, text) {
+  const ok = kind === "tx" ? isHash(value) : isAddr(value);
+  if (!ok || !EXPLORER) return el("span", { class: "mono" }, text ?? "—");
+  return el("a", { class: "mono", href: `${EXPLORER}/${kind === "tx" ? "tx" : "address"}/${value}`, target: "_blank", rel: "noopener" }, text ?? short(value));
+}
+async function getJson(path) {
+  const r = await fetch(path, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  return r.json();
+}
+
+async function load() {
+  try {
+    const [health, policy, ledger] = await Promise.all([getJson("/health"), getJson("/api/policy"), getJson("/api/ledger?limit=50")]);
+    const chainId = Number(String(health.network).split(":")[1]);
+    const mainnet = chainId === 5042;
+    EXPLORER = String(ledger.explorer || "").replace(/\/address\/.*$/, "");
+    if (!/^https:\/\/[a-z0-9.-]+$/i.test(EXPLORER)) EXPLORER = "";
+
+    $("status").textContent = `live · ${mainnet ? "Arc Mainnet" : "Arc Testnet"} (chain ${chainId})`;
+    $("status").className = "live";
+    $("network-name").textContent = mainnet ? "Arc Mainnet" : "Arc Testnet";
+    $("contract-link").replaceChildren(link("address", ledger.contract, "SpendLogger contract"));
+    const logs = $("logs-link");
+    if (isAddr(ledger.contract) && EXPLORER) logs.href = `${EXPLORER}/address/${ledger.contract}?tab=logs`;
+    $("call-cmd").textContent = `node agent/agent.js --network ${mainnet ? "arcMainnet" : "arcTestnet"} \\\n  --service ${location.origin} --calls 1`;
+
+    renderPolicy(policy, health);
+    renderLedger(ledger, policy, health);
+    $("updated").textContent = "Read from chain " + new Date().toISOString().slice(11, 19) + " UTC · refreshes every 30 s";
+  } catch (e) {
+    $("status").textContent = "can't reach the chain right now: retrying";
+    $("status").className = "live down";
+  }
+}
+
+function renderPolicy(p, health) {
+  const r = p.policy;
+  const payees = (r.allowedPayees || []).filter(isAddr);
+  const rules = [
+    ["Max per purchase", usd(r.maxPerCall)],
+    ["Max per UTC day", usd(r.dailyCap)],
+    ["Pays in", r.asset && r.asset.toLowerCase() === "0x3600000000000000000000000000000000000000" ? "USDC only" : short(String(r.asset))],
+    ["May pay", payees.length ? (payees.length === 1 && payees[0] === health.payTo ? "this service only" : `${payees.length} approved address(es)`) : "anyone"],
+  ];
+  $("rules").replaceChildren(...rules.map(([k, v]) => el("li", {}, el("span", {}, k), el("b", {}, v))));
+
+  const status = p.matches
+    ? el("span", { class: "badge" }, "✓ file matches the chain")
+    : el("span", { class: "badge warn" }, "file differs from the chain");
+  const meta = [
+    ["Agent", link("address", r.agent)],
+    ["Controller", link("address", p.controller)],
+    ["Policy hash", el("span", { class: "mono" }, isHash(p.onChainHash) ? short(p.onChainHash) : "—")],
+    ["Status", status],
+    ["Rulebook", el("a", { href: `https://github.com/Reen500/moloko-arc-spend-tracker/blob/main/${encodeURI(p.file)}`, target: "_blank", rel: "noopener" }, p.file)],
+  ];
+  $("policy-meta").replaceChildren(...meta.flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]));
+}
+
+function renderLedger(ledger, policy, health) {
+  const rows = Array.isArray(ledger.purchases) ? ledger.purchases : [];
+  const total = Number(ledger.purchaseCount);
+  $("t-count").textContent = Number.isFinite(total) ? total.toLocaleString() : "—";
+
+  const spent = rows.reduce((a, p) => a + Number(p.amount || 0), 0);
+  $("t-spent").textContent = usd(spent);
+  $("t-spent-note").textContent = rows.length < total ? `USDC, latest ${rows.length}` : "USDC, all purchases";
+
+  const rated = rows.filter((p) => p.outcome && Number.isInteger(p.outcome.score));
+  $("t-score").textContent = rated.length ? (rated.reduce((a, p) => a + p.outcome.score, 0) / rated.length).toFixed(1) : "—";
+  $("t-score-note").textContent = `${rated.length} of ${rows.length} rated by the buyer`;
+
+  const inPolicy = rows.filter((p) => isHash(p.policyHash) && p.policyHash === policy.onChainHash);
+  $("t-policy").textContent = rows.length ? `${inPolicy.length}/${rows.length}` : "—";
+
+  if (!rows.length) { $("rows").replaceChildren(el("tr", {}, el("td", { colspan: "8", class: "empty" }, "No purchases yet."))); return; }
+
+  $("rows").replaceChildren(...rows.map((p) => {
+    const settle = (String(p.memo || "").match(/x402:(0x[0-9a-fA-F]{64})/) || [])[1];
+    const when = new Date(Number(p.timestamp) * 1000).toISOString().replace("T", " ").slice(0, 16);
+    const policyCell = p.policyHash === policy.onChainHash
+      ? el("span", { class: "badge", title: p.policyHash }, "✓ committed")
+      : el("span", { class: "badge warn", title: String(p.policyHash) }, isHash(p.policyHash) && !/^0x0+$/.test(p.policyHash) ? "other " + short(p.policyHash) : "none");
+    const s = p.outcome && Number.isInteger(p.outcome.score) ? Math.max(0, Math.min(5, p.outcome.score)) : null;
+    const scoreCell = s === null ? el("span", { class: "muted" }, "not rated")
+      : el("span", { class: "score", title: `${s} of 5` }, "★".repeat(s), el("i", {}, "★".repeat(5 - s)));
+    const byService = p.reporter === health.service;
+    const reporter = byService ? el("span", { class: "muted" }, "this service") : link("address", p.reporter);
+    return el("tr", {},
+      el("td", { class: "mono" }, String(Number(p.id))),
+      el("td", { class: "mono" }, when),
+      el("td", { class: "hide-sm" }, link("address", p.agent)),
+      el("td", { class: "num" }, usd(p.amount)),
+      el("td", {}, settle ? link("tx", settle) : el("span", { class: "muted" }, "—")),
+      el("td", {}, policyCell),
+      el("td", {}, scoreCell),
+      el("td", { class: "hide-sm" }, reporter),
+    );
+  }));
+  $("rows-note").textContent = rows.length < total ? `Showing the latest ${rows.length} of ${total}. The full history is on the explorer and in reconcile.js.` : "";
+}
+
+load();
+setInterval(load, 30_000);
+</script>
+</body>
+</html>

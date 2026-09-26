@@ -3,6 +3,8 @@
 //   POST /api/process-description   $0.01 USDC via x402 (Arc; ARC_NETWORK picks testnet/mainnet)
 //   GET  /api/ledger                 free: recent PurchaseLogged entries
 //   GET  /health                     free
+//   GET  /api/policy                 free: the agent policy file, its hash, and the on-chain commitment
+//   GET  /                           free: public ledger page (service/public/index.html)
 //
 // Payment flow (spec §7):
 //   1. No PAYMENT-SIGNATURE header  -> 402 + requirements (payTo = Arc-Deployer).
@@ -15,6 +17,7 @@
 import { config as loadEnv } from "dotenv";
 import { readFileSync, appendFileSync } from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme as ExactEvmServerScheme } from "@x402/evm/exact/server";
@@ -27,6 +30,7 @@ import {
   NETWORK, ARC, arcChain, ARC_CAIP2, ARC_USDC, ARC_USDC_EIP712, arcTransport, serviceKey,
   spendLoggerAbi, txUrl, addressUrl, fmtUsdc,
 } from "../shared/arc.js";
+import { validatePolicy, policyHash } from "../shared/policy.js";
 import { generatePlan } from "./plan.js";
 
 loadEnv({ path: new URL("../.env", import.meta.url) });
@@ -251,6 +255,26 @@ app.get("/api/ledger", async (req, res) => {
   ledgerCache.set(limit, { at: Date.now(), body });
   res.json(body);
 });
+
+// The published policy of this network's demo agent, next to what the chain says.
+// The page uses it to show the rules each purchase was made under.
+const POLICY_FILE = new URL(`../${ARC.defaultPolicy}`, import.meta.url);
+let policyCache = null;
+app.get("/api/policy", async (_req, res) => {
+  if (policyCache && Date.now() - policyCache.at < LEDGER_TTL_MS) return res.json(policyCache.body);
+  const policy = validatePolicy(JSON.parse(readFileSync(POLICY_FILE, "utf8")));
+  const hash = policyHash(policy);
+  const [controller, onChainHash] = await Promise.all([
+    chainClient.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "controllerOf", args: [policy.agent] }),
+    chainClient.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "policyOf", args: [policy.agent] }),
+  ]);
+  const body = { file: ARC.defaultPolicy, policy, hash, onChainHash, controller, matches: onChainHash === hash };
+  policyCache = { at: Date.now(), body };
+  res.json(body);
+});
+
+// Public ledger page. Static; it reads /health, /api/policy and /api/ledger.
+app.use(express.static(fileURLToPath(new URL("./public/", import.meta.url)))); // ETag-revalidated, so a deploy shows at once
 
 app.use(paymentMiddleware(routes, resourceServer));
 
