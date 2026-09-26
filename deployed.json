@@ -56,7 +56,17 @@
     "version": "v2",
     "explorer": {
       "contract": "https://explorer.arc.io/address/0x3afcbef1c1cc1ded0550a24abd8dfa8c377c9add",
-      "tx": "https://explorer.arc.io/tx/0x7ed932ae3828315258676b7bffc62581143d789685338f241d9d511b3b74339a"
+      "tx": "https://explorer.arc.io/tx/0x7ed932ae3828315258676b7bffc62581143d789685338f241d9d511b3b74339a",
+      "code": "https://explorer.arc.io/address/0x3afcBef1C1cC1DED0550a24Abd8dfA8c377C9aDd?tab=contract"
+    },
+    "verified": true,
+    "policy": {
+      "agent": "0x76c60B33cBa6Db251d7FedA4f7f09363c85f58a0",
+      "controller": "0x37B2E138337445A3288015e10C880b69401D6cB3",
+      "policyFile": "policies/arc-agent-mainnet.json",
+      "policyHash": "0x15156becbd497c67c5c60a1edbc9df9f4bb3604a5fdc612b09f979d0a4acb5bc",
+      "bindTx": "0xaba4c9e01f126a6425f82b1f1f0e09ba461374d4db075cb8a52a11cf1f9fd249",
+      "setPolicyTx": "0x6a1e94c98cc740202281ce2870ea1906277a729229485d1d6b7013e39b8132e1"
     }
   }
 }

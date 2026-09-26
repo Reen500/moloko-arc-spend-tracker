@@ -34,7 +34,7 @@ policy hash in force, and the agent's `OutcomeRecorded` score.
 |---|---|
 | **Public ledger** | **https://service-production-33b0.up.railway.app**: every purchase, the policy it ran under, and the buyer's rating, read live from the contract |
 | **Service** (x402, $0.01 USDC per call) | `POST /api/process-description` on the same host · [`/health`](https://service-production-33b0.up.railway.app/health) · [`/api/ledger`](https://service-production-33b0.up.railway.app/api/ledger) · [`/api/policy`](https://service-production-33b0.up.railway.app/api/policy) |
-| `SpendLogger` **v2** | [`0x3afcBef1C1cC1DED0550a24Abd8dfA8c377C9aDd`](https://explorer.arc.io/address/0x3afcBef1C1cC1DED0550a24Abd8dfA8c377C9aDd) — runtime bytecode identical to the source-verified testnet v2 · deployed in [`0x7ed932ae…339a`](https://explorer.arc.io/tx/0x7ed932ae3828315258676b7bffc62581143d789685338f241d9d511b3b74339a) |
+| `SpendLogger` **v2** | [`0x3afcBef1C1cC1DED0550a24Abd8dfA8c377C9aDd`](https://explorer.arc.io/address/0x3afcBef1C1cC1DED0550a24Abd8dfA8c377C9aDd) — [source verified](https://explorer.arc.io/address/0x3afcBef1C1cC1DED0550a24Abd8dfA8c377C9aDd?tab=contract) (exact match) · deployed in [`0x7ed932ae…339a`](https://explorer.arc.io/tx/0x7ed932ae3828315258676b7bffc62581143d789685338f241d9d511b3b74339a) |
 | Agent's policy | [`policies/arc-agent-mainnet.json`](policies/arc-agent-mainnet.json) → `0x15156bec…b5bc` ($0.02 per call, $0.50 per day, one allowed payee), committed by the controller in [`0x6a1e94c9…32e1`](https://explorer.arc.io/tx/0x6a1e94c98cc740202281ce2870ea1906277a729229485d1d6b7013e39b8132e1) |
 | Controller (Arc-Owner) | [`0x37B2E138…6cB3`](https://explorer.arc.io/address/0x37B2E138337445A3288015e10C880b69401D6cB3). Deployed the contract and set the policy, signing in MetaMask; its key is never on disk. |
 | Service wallet (Arc-Service) | [`0xa29Ffc6C…3CB8`](https://explorer.arc.io/address/0xa29Ffc6C04012678b5Cc2115587689F409673CB8). Receives payments, settles them, logs them. |
@@ -233,7 +233,6 @@ Measured costs on testnet (21 gwei; mainnet runs at ~20 gwei and the same gas): 
 
 ## Roadmap
 
-- Source verification on explorer.arc.io
 - Policy rules driven by outcomes ("stop paying vendor X below score 2")
 - Batch settlement via Circle Gateway to cut the ~74% gas overhead at $0.01/call
 - Replace the heuristic planner with a real model behind the same interface
