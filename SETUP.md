@@ -4,9 +4,12 @@ This guide takes you from a blank Windows machine to a `SpendLogger` contract
 deployed on **Arc Testnet**, a running x402-paid service, and an agent that pays
 it. Every command is PowerShell. Every value is **testnet**.
 
+> Parts A–C are testnet. **[Part D](#part-d--arc-mainnet)** moves to Arc Mainnet
+> with real USDC and different wallets. Do A–C first.
+>
 > **Golden rules**
-> 1. **Testnet only.** If you ever see a mainnet RPC or a USDC address that is
->    not the one listed below, stop.
+> 1. **Parts A–C are testnet only.** If you ever see a mainnet RPC or a USDC
+>    address that is not the one listed below, stop.
 > 2. **Throwaway wallets.** The two wallets you create here must never hold real
 >    money. Their private keys will sit in a local `.env` file.
 > 3. **Never paste a private key or seed phrase into a chat, an issue, or a
@@ -165,6 +168,75 @@ If the service ever could not write an audit entry (RPC outage), it is queued in
 - Free JSON view from the running service: http://localhost:3001/api/ledger
 
 ---
+
+## Part D — Arc Mainnet
+
+Real USDC from here. The code is the same; `--network arcMainnet` (or
+`ARC_NETWORK=arcMainnet`) switches chain, RPC, explorer, keys and policy file.
+
+### D1. New wallets, new seed
+Don't add mainnet accounts to your testnet MetaMask. Its keys have sat in a
+plaintext `.env`, and accounts from one seed are not isolated from each other.
+1. Chrome → profile icon → **Add** → *Stay signed out* → name it `Arc Mainnet`.
+2. In that window install MetaMask (metamask.io), choose **Use Secret Recovery
+   Phrase → Create a new wallet**, and write the 12 words on paper.
+3. Create three accounts: **Arc-Owner**, **Arc-Service**, **Arc-Agent-MN**.
+4. Add the network: RPC `https://rpc.mainnet.arc.io`, chain ID `5042`, symbol
+   `USDC`, explorer `https://explorer.arc.io`.
+5. Fund them with a few dollars each (bridge USDC to Arc at https://portal.arc.io).
+   About $2 for Owner, $3 for Service and $2 for Agent is plenty.
+
+### D2. Keys: two in `.env`, one never
+Add to `.env` (see `.env.example`). The owner's **key** never goes anywhere;
+it signs in MetaMask.
+```
+MAINNET_SERVICE_PRIVATE_KEY=0x...
+MAINNET_AGENT_PRIVATE_KEY=0x...
+MAINNET_OWNER_ADDRESS=0x...
+```
+Edit `policies/arc-agent-mainnet.json` so `agent`, `controller` and
+`allowedPayees` are your Agent, Owner and Service addresses.
+
+### D3. Deploy and set policy (Owner signs in MetaMask)
+```powershell
+cd C:\dev\arc-spend-tracker
+npx hardhat compile
+# deployed.json in this repo already holds our mainnet contract: delete its "arcMainnet" entry before your own deploy
+node scripts/owner-sign.js deploy --network arcMainnet        # open http://127.0.0.1:8547 in the Arc Mainnet profile → Sign
+node scripts/policy.js bind --network arcMainnet               # agent binds Owner as its controller (agent key signs)
+node scripts/owner-sign.js set-policy --network arcMainnet    # Owner commits the policy hash → Sign
+node scripts/policy.js show --network arcMainnet               # expect "✓ matches file"
+```
+Each page asks MetaMask to send exactly the transaction the terminal printed.
+Check the account is Arc-Owner before confirming.
+
+### D4. Host the service on Railway
+[`railway.json`](railway.json) holds the build, start and health-check settings.
+1. New Railway project → empty service → connect this GitHub repo (`main`).
+2. Variables: `ARC_NETWORK=arcMainnet`, `NODE_ENV=production`, and
+   `MAINNET_SERVICE_PRIVATE_KEY`, which you then **Seal** (⋮ → Seal).
+3. Settings → Networking → **Generate domain**. Check `https://<domain>/health`
+   shows `eip155:5042`.
+4. Stop any local copy of the service first: two processes signing with the
+   same wallet collide on nonces.
+
+### D5. Pay it, then reconcile
+```powershell
+node agent/agent.js --network arcMainnet --service https://<domain> --calls 1
+node scripts/reconcile.js --network arcMainnet --export --out exports/mainnet
+```
+
+---
+
+## Reference: Arc Mainnet values
+
+| Item | Value |
+|---|---|
+| RPC | `https://rpc.mainnet.arc.io` (`eth_getLogs`: max 10,000 blocks per call) |
+| Chain ID | `5042` (CAIP-2: `eip155:5042`) |
+| USDC ERC-20 | `0x3600000000000000000000000000000000000000`, EIP-712 `name: "USDC", version: "2"` (same as testnet; checked on-chain) |
+| Explorer | `https://explorer.arc.io` |
+| Funding | Bridge USDC in via https://portal.arc.io (CCTP) |
 
 ## Reference: Arc Testnet values (all official, all testnet)
 

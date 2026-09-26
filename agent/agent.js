@@ -6,6 +6,7 @@
 //   node agent.js --dry-run                  # show the 402 + policy decision, sign nothing
 //   node agent.js --no-outcome               # skip the on-chain outcome record
 //   node agent.js --policy policies/x.json   # use a different rulebook
+//   node agent.js --service https://…         # service base URL (default SERVICE_URL or localhost:3001)
 //
 // Signs with AGENT_PRIVATE_KEY on testnet, MAINNET_AGENT_PRIVATE_KEY on mainnet (ARC_NETWORK).
 //   - Payment: an off-chain EIP-3009 authorization; the service submits it and
@@ -50,7 +51,7 @@ const nextDelayMs = () => {
   return Math.round((DELAY_MIN + Math.random() * Math.max(0, max - DELAY_MIN)) * 1000);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const SERVICE_URL = (process.env.SERVICE_URL ?? "http://localhost:3001").replace(/\/$/, "");
+const SERVICE_URL = String(flag("--service", process.env.SERVICE_URL ?? "http://localhost:3001")).replace(/\/$/, "");
 const ENDPOINT = `${SERVICE_URL}/api/process-description`;
 
 const account = privateKeyToAccount(agentKey(), { nonceManager });

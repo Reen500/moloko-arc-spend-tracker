@@ -1,4 +1,7 @@
-# service — x402-paid API on Arc Testnet
+# service — x402-paid API on Arc
+
+Live on Arc Mainnet at https://service-production-33b0.up.railway.app (hosted on
+Railway; see [`railway.json`](../railway.json) and [SETUP.md Part D](../SETUP.md#part-d--arc-mainnet)).
 
 An Express server with one paid endpoint. Agents pay **$0.01 USDC** per call via
 the [x402](https://x402.org) protocol; after payment settles, the service writes
@@ -10,8 +13,11 @@ operating under.
 | Method | Path | Cost | What |
 |---|---|---|---|
 | `POST` | `/api/process-description` | $0.01 USDC | Body `{ "description": "<business process in plain text>" }` → structured automation plan (`steps`, `inputs`, `outputs`, `decision_points`, `suggested_tools`, `assessment`). |
-| `GET` | `/api/ledger?limit=10` | free | Latest `SpendLogger` purchases with policy hash and outcome, read from chain. |
+| `GET` | `/api/ledger?limit=10` | free | Latest `SpendLogger` purchases (max 50) with policy hash and outcome, read from chain, cached 15 s. |
 | `GET` | `/health` | free | Network, payTo, contract, price, `pendingAudit` count, whether test overrides are active. |
+
+Free routes are rate-limited to 60 requests a minute per IP (429 above that).
+They fan out to RPC reads, and the public RPC's limit is shared with settlement.
 
 Response headers on a paid 200: `PAYMENT-RESPONSE` (x402 settlement, includes the
 USDC tx), `X-Spend-Log-Tx`, `X-Spend-Log-Id`, `X-Spend-Log-Contract`. If the audit
@@ -22,19 +28,22 @@ write had to be deferred: `X-Spend-Log-Pending: 1`.
 ```powershell
 cd C:\dev\arc-spend-tracker\service
 npm install
-npm start          # http://localhost:3001
+npm start                          # testnet, http://localhost:3001
+$env:ARC_NETWORK="arcMainnet"; npm start   # mainnet
 ```
 
 Reads `../.env`:
 
 | Var | Purpose |
 |---|---|
-| `DEPLOYER_PRIVATE_KEY` | Arc-Deployer wallet. Receives payments, settles them, calls `logPurchase`. |
-| `SERVICE_PORT` | default `3001` |
+| `ARC_NETWORK` | `arcTestnet` (default) or `arcMainnet` |
+| `DEPLOYER_PRIVATE_KEY` | testnet service wallet (Arc-Deployer). Receives payments, settles them, calls `logPurchase`. |
+| `MAINNET_SERVICE_PRIVATE_KEY` | mainnet service wallet (Arc-Service), same job. On Railway: a sealed variable. |
+| `PORT` / `SERVICE_PORT` | `PORT` is set by Railway; otherwise `SERVICE_PORT`, default `3001` |
 | `SERVICE_PRICE_BASE_UNITS` | default `10000` (= $0.01, USDC has 6 decimals) |
-| `SPEND_LOGGER_ADDRESS` | optional override; defaults to `../deployed.json` → `arcTestnet.address` |
-| `ARC_TESTNET_RPC` | optional override; defaults to the public `https://rpc.testnet.arc.io`. Use a keyed provider under load. |
-| `TEST_ONLY_PAYTO`, `TEST_ONLY_ASSET` | **tests only** — make the service advertise a payee / asset the agent's policy must refuse. Refused under `NODE_ENV=production`; printed loudly at startup. |
+| `SPEND_LOGGER_ADDRESS` | optional override; defaults to `../deployed.json` → `<network>.address` |
+| `ARC_TESTNET_RPC` / `ARC_MAINNET_RPC` | optional override of the public RPC. Use a keyed provider under load. |
+| `TEST_ONLY_PAYTO`, `TEST_ONLY_ASSET` | **tests only** — make the service advertise a payee / asset the agent's policy must refuse. Refused on mainnet and under `NODE_ENV=production`; printed loudly at startup. |
 
 ## How payment works here
 

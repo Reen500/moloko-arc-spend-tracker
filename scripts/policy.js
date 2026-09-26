@@ -19,7 +19,8 @@ import { validatePolicy, policyHash, canonicalize } from "../shared/policy.js";
 const argv = process.argv.slice(2);
 const pi = argv.indexOf("--policy");
 const POLICY_PATH = pi === -1 ? ARC.defaultPolicy : argv[pi + 1];
-const positional = argv.filter((a, i) => !a.startsWith("--") && (pi === -1 || i !== pi + 1));
+const ni = argv.indexOf("--network");
+const positional = argv.filter((a, i) => !a.startsWith("--") && (pi === -1 || i !== pi + 1) && (ni === -1 || i !== ni + 1));
 const cmd = positional[0] ?? "show";
 if (!["show", "bind", "set"].includes(cmd)) throw new Error(`unknown command "${cmd}" — use show | bind | set`);
 

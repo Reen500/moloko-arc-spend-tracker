@@ -3,7 +3,7 @@
 A Node script that plays the role of an autonomous agent buying a service under
 a spending policy it cannot loosen itself:
 
-1. **Load the rulebook** (`policies/arc-agent.json`), hash it, and check the hash
+1. **Load the rulebook** (`policies/arc-agent-mainnet.json` on mainnet, `policies/arc-agent.json` on testnet), hash it, and check the hash
    equals `SpendLogger.policyOf(agent)` on-chain. If the controller has committed
    a different policy, the agent refuses to start.
 2. **Discover** — `POST`s to the endpoint with no payment, reads the `402`.
@@ -25,7 +25,8 @@ a spending policy it cannot loosen itself:
 ```powershell
 cd C:\dev\arc-spend-tracker\agent
 npm install
-node agent.js                              # 1 paid call + outcome
+node agent.js                              # 1 paid call + outcome (testnet)
+node agent.js --network arcMainnet --service https://service-production-33b0.up.railway.app   # mainnet, hosted service
 node agent.js --calls 5 --delay 30-120     # 5 calls, random 30–120 s apart
 node agent.js --dry-run                    # 402 + policy verdict only, signs nothing
 node agent.js --no-outcome                 # skip the on-chain rating
@@ -40,10 +41,12 @@ Reads `../.env`:
 
 | Var | Purpose |
 |---|---|
-| `AGENT_PRIVATE_KEY` | Arc-Agent wallet. Signs off-chain payment authorizations (service pays gas) and its own `recordOutcome` transactions (agent pays gas). |
-| `SERVICE_URL` | default `http://localhost:3001` |
+| `ARC_NETWORK` | `arcTestnet` (default) or `arcMainnet`; `--network` overrides it |
+| `AGENT_PRIVATE_KEY` | testnet agent wallet (Arc-Agent). Signs off-chain payment authorizations (service pays gas) and its own `recordOutcome` transactions (agent pays gas). |
+| `MAINNET_AGENT_PRIVATE_KEY` | mainnet agent wallet (Arc-Agent-MN), same job |
+| `SERVICE_URL` | default `http://localhost:3001`; `--service` overrides it |
 | `SPEND_LOGGER_ADDRESS` | optional override; defaults to `../deployed.json` |
-| `ARC_TESTNET_RPC` | optional keyed RPC; the public one throttles under concurrency |
+| `ARC_TESTNET_RPC` / `ARC_MAINNET_RPC` | optional keyed RPC; the public ones throttle under concurrency |
 
 ## Trial drivers
 
