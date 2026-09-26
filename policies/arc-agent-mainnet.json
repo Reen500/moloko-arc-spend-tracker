@@ -1,0 +1,11 @@
+{
+  "version": "1",
+  "description": "Moloko Labs demo agent — Arc Mainnet. Real USDC: small, bounded spend on the Moloko service only.",
+  "agent": "0x76c60B33cBa6Db251d7FedA4f7f09363c85f58a0",
+  "controller": "0x37B2E138337445A3288015e10C880b69401D6cB3",
+  "network": "eip155:5042",
+  "asset": "0x3600000000000000000000000000000000000000",
+  "maxPerCall": "20000",
+  "dailyCap": "500000",
+  "allowedPayees": ["0xa29Ffc6C04012678b5Cc2115587689F409673CB8"]
+}

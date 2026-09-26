@@ -19,7 +19,8 @@ import "dotenv/config";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createPublicClient, getAddress } from "viem";
-import { arcTestnet, arcTransport, ARC_TESTNET_USDC, ARC_TESTNET_EXPLORER, spendLoggerAbi, usdcAbi, fmtUsdc, txUrl } from "../shared/arc.js";
+import { privateKeyToAccount } from "viem/accounts";
+import { NETWORK, ARC, arcChain, arcTransport, agentKey, LOG_SPAN, ARC_USDC, ARC_EXPLORER, spendLoggerAbi, usdcAbi, fmtUsdc, txUrl } from "../shared/arc.js";
 
 // ---------------------------------------------------------------------------
 // args
@@ -31,12 +32,13 @@ const today = new Date().toISOString().slice(0, 10);
 const OUT_DIR = opt("--out", join(process.cwd(), "exports", today));
 
 const deployed = JSON.parse(readFileSync(new URL("../deployed.json", import.meta.url), "utf8"));
-const SPEND_LOGGER = getAddress(deployed.arcTestnet.address);
-const AGENT = getAddress(process.env.AGENT_ADDRESS ?? "0xaAf714460A9FbEc7C3f0618cf04E84938b86DC8D");
-const chain = createPublicClient({ chain: arcTestnet, transport: arcTransport() });
+const SPEND_LOGGER = getAddress(deployed[NETWORK].address);
+// AGENT_ADDRESS in .env is the testnet agent; on mainnet the agent comes from its key.
+const AGENT = getAddress(ARC.testnet && process.env.AGENT_ADDRESS ? process.env.AGENT_ADDRESS : privateKeyToAccount(agentKey()).address);
+const chain = createPublicClient({ chain: arcChain, transport: arcTransport() });
 const latest = await chain.getBlockNumber();
-const fromBlock = BigInt(opt("--from", deployed.arcTestnet.blockNumber));
-const CHUNK = 10_000n;
+const fromBlock = BigInt(opt("--from", deployed[NETWORK].blockNumber));
+const CHUNK = LOG_SPAN;
 
 async function scan(fn) {
   const out = [];
@@ -49,7 +51,7 @@ async function scan(fn) {
 // ---------------------------------------------------------------------------
 console.log(`SpendLogger ${SPEND_LOGGER} · blocks ${fromBlock}..${latest} · agent ${AGENT}`);
 const [payments, entries, outcomes, policySets] = await Promise.all([
-  scan((f, t) => chain.getContractEvents({ address: ARC_TESTNET_USDC, abi: usdcAbi, eventName: "Transfer", args: { from: AGENT }, fromBlock: f, toBlock: t })),
+  scan((f, t) => chain.getContractEvents({ address: ARC_USDC, abi: usdcAbi, eventName: "Transfer", args: { from: AGENT }, fromBlock: f, toBlock: t })),
   scan((f, t) => chain.getContractEvents({ address: SPEND_LOGGER, abi: spendLoggerAbi, eventName: "PurchaseLogged", args: { agent: AGENT }, fromBlock: f, toBlock: t })),
   scan((f, t) => chain.getContractEvents({ address: SPEND_LOGGER, abi: spendLoggerAbi, eventName: "OutcomeRecorded", args: { agent: AGENT }, fromBlock: f, toBlock: t })),
   scan((f, t) => chain.getContractEvents({ address: SPEND_LOGGER, abi: spendLoggerAbi, eventName: "PolicySet", args: { agent: AGENT }, fromBlock: f, toBlock: t })),
@@ -147,7 +149,7 @@ if (EXPORT) {
   // 1. Full ledger — one row per reconciled purchase, everything an auditor needs.
   writeFileSync(join(OUT_DIR, "ledger.csv"), csv(
     ["purchase_id", "timestamp_utc", "agent", "vendor", "amount_usdc", "amount_base_units", "settlement_tx", "settlement_block", "ledger_tx", "policy_hash", "reporter", "outcome_score", "outcome_tx", "outcome_by", "memo", "explorer"],
-    rows.map((r) => [r.purchaseId, r.timestamp, r.agent, r.vendor, r.amountUsdc.toFixed(6), r.amountBaseUnits, r.settlementTx, r.settlementBlock, r.ledgerTx, r.policyHash, r.reporter, r.outcomeScore, r.outcomeTx, r.outcomeBy, r.memo, `${ARC_TESTNET_EXPLORER}/tx/${r.settlementTx}`]),
+    rows.map((r) => [r.purchaseId, r.timestamp, r.agent, r.vendor, r.amountUsdc.toFixed(6), r.amountBaseUnits, r.settlementTx, r.settlementBlock, r.ledgerTx, r.policyHash, r.reporter, r.outcomeScore, r.outcomeTx, r.outcomeBy, r.memo, `${ARC_EXPLORER}/tx/${r.settlementTx}`]),
   ));
 
   // Accounting systems round to cents and nobody wants 49 one-cent lines, so the

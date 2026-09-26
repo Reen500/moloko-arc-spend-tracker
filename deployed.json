@@ -42,5 +42,21 @@
     },
     "verified": true,
     "note": "v1 — ledger only. Superseded by v2 (arcTestnet) but history stays live."
+  },
+  "arcMainnet": {
+    "network": "arcMainnet",
+    "chainId": 5042,
+    "contract": "SpendLogger",
+    "address": "0x3afcbef1c1cc1ded0550a24abd8dfa8c377c9add",
+    "deployer": "0x37B2E138337445A3288015e10C880b69401D6cB3",
+    "txHash": "0x7ed932ae3828315258676b7bffc62581143d789685338f241d9d511b3b74339a",
+    "blockNumber": 22892879,
+    "gasUsed": "1144141",
+    "deployedAt": "2026-09-26T17:23:26.345Z",
+    "version": "v2",
+    "explorer": {
+      "contract": "https://explorer.arc.io/address/0x3afcbef1c1cc1ded0550a24abd8dfa8c377c9add",
+      "tx": "https://explorer.arc.io/tx/0x7ed932ae3828315258676b7bffc62581143d789685338f241d9d511b3b74339a"
+    }
   }
 }

@@ -7,7 +7,7 @@
 //   node agent.js --no-outcome               # skip the on-chain outcome record
 //   node agent.js --policy policies/x.json   # use a different rulebook
 //
-// Signs with AGENT_PRIVATE_KEY (Arc-Agent MetaMask account).
+// Signs with AGENT_PRIVATE_KEY on testnet, MAINNET_AGENT_PRIVATE_KEY on mainnet (ARC_NETWORK).
 //   - Payment: an off-chain EIP-3009 authorization; the service submits it and
 //     pays gas, so this wallet spends exactly the price.
 //   - Outcome: a real transaction from this wallet (recordOutcome), gas in USDC.
@@ -24,7 +24,7 @@ import { ExactEvmScheme } from "@x402/evm";
 import { createWalletClient, publicActions, getAddress, keccak256, toHex, nonceManager } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
-  arcTestnet, ARC_TESTNET_CAIP2, ARC_TESTNET_USDC, arcTransport,
+  NETWORK, ARC, arcChain, ARC_CAIP2, ARC_USDC, arcTransport, agentKey, LOG_SPAN,
   spendLoggerAbi, usdcAbi, txUrl, addressUrl, fmtUsdc,
 } from "../shared/arc.js";
 import { validatePolicy, policyHash, evaluate, utcDayStart, sumSpentSince } from "../shared/policy.js";
@@ -39,7 +39,7 @@ const flag = (name, def) => { const i = argv.indexOf(name); return i === -1 ? de
 const CALLS = Number(flag("--calls", 1));
 const DRY_RUN = argv.includes("--dry-run");
 const RECORD_OUTCOME = !argv.includes("--no-outcome");
-const POLICY_PATH = String(flag("--policy", "policies/arc-agent.json"));
+const POLICY_PATH = String(flag("--policy", ARC.defaultPolicy));
 const PROCESS_OFFSET = Number(flag("--process", 0)); // which sample process to start from
 const BAD_BODY = argv.includes("--bad-body");   // pay, but send a body the handler rejects (expect: not charged)
 const REPLAY = argv.includes("--replay");       // after a paid call, re-send the same signed request (expect: rejected)
@@ -53,17 +53,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SERVICE_URL = (process.env.SERVICE_URL ?? "http://localhost:3001").replace(/\/$/, "");
 const ENDPOINT = `${SERVICE_URL}/api/process-description`;
 
-const AGENT_PRIVATE_KEY = process.env.AGENT_PRIVATE_KEY;
-if (!AGENT_PRIVATE_KEY || AGENT_PRIVATE_KEY === "0x...") {
-  throw new Error("AGENT_PRIVATE_KEY missing in .env (Arc-Agent wallet; see SETUP.md Part B).");
-}
-const account = privateKeyToAccount(AGENT_PRIVATE_KEY, { nonceManager });
-const chain = createWalletClient({ account, chain: arcTestnet, transport: arcTransport() }).extend(publicActions);
+const account = privateKeyToAccount(agentKey(), { nonceManager });
+const chain = createWalletClient({ account, chain: arcChain, transport: arcTransport() }).extend(publicActions);
 
 function resolveSpendLogger() {
   if (process.env.SPEND_LOGGER_ADDRESS) return getAddress(process.env.SPEND_LOGGER_ADDRESS);
   const d = JSON.parse(readFileSync(new URL("../deployed.json", import.meta.url), "utf8"));
-  return getAddress(d.arcTestnet.address);
+  return getAddress(d[NETWORK].address);
 }
 const SPEND_LOGGER = resolveSpendLogger();
 
@@ -75,7 +71,7 @@ const PROCESSES = [
   "Expense claims arrive as scanned receipts. Extract merchant, date and amount, check against policy limits, and if over the limit request director approval. Approved claims are posted to the payroll batch.",
 ];
 
-const usdcBalance = (addr) => chain.readContract({ address: ARC_TESTNET_USDC, abi: usdcAbi, functionName: "balanceOf", args: [addr] });
+const usdcBalance = (addr) => chain.readContract({ address: ARC_USDC, abi: usdcAbi, functionName: "balanceOf", args: [addr] });
 
 // ---------------------------------------------------------------------------
 // Policy: load, hash, and check the hash matches what the controller committed
@@ -127,7 +123,9 @@ async function blockAtOrAfter(tsSec, latest) {
 
 const CACHE_DIR = new URL("../.cache/", import.meta.url);
 async function dayStartBlock(dayStart, latest) {
-  const file = new URL(`daystart-${dayStart}.json`, CACHE_DIR);
+  // Keyed by network: a testnet block number read on mainnet would put the scan
+  // past the chain head, count $0 spent and silently disable the daily cap.
+  const file = new URL(`daystart-${NETWORK}-${dayStart}.json`, CACHE_DIR);
   try { return BigInt(JSON.parse(readFileSync(file, "utf8")).block); } catch { /* not cached */ }
   const block = await blockAtOrAfter(dayStart, latest);
   try { mkdirSync(CACHE_DIR, { recursive: true }); writeFileSync(file, JSON.stringify({ dayStart: dayStart.toString(), block: block.toString() })); } catch { /* best effort */ }
@@ -138,8 +136,8 @@ async function spentTodayBaseUnits() {
   const latest = await chain.getBlock();
   const dayStart = DAY_START_OVERRIDE ? BigInt(Math.floor(Date.parse(DAY_START_OVERRIDE) / 1000)) : utcDayStart();
   const fromBlock = await dayStartBlock(dayStart, latest);
-  // Arc public RPC caps eth_getLogs at ~20k blocks per call; a full UTC day is ~150k. Chunk it.
-  const CHUNK = 10_000n;
+  // Arc public RPCs cap eth_getLogs per call (see LOG_SPAN); a full UTC day is ~150k blocks. Chunk it.
+  const CHUNK = LOG_SPAN;
   const logs = [];
   for (let start = fromBlock; start <= latest.number; start += CHUNK + 1n) {
     const end = start + CHUNK > latest.number ? latest.number : start + CHUNK;
@@ -159,7 +157,7 @@ let refusals = 0;
 // then tracked locally as calls succeed — one scan per process, not per call.
 let spentToday = null;
 const client = x402Client.fromConfig({
-  schemes: [{ network: ARC_TESTNET_CAIP2, client: new ExactEvmScheme(account) }],
+  schemes: [{ network: ARC_CAIP2, client: new ExactEvmScheme(account) }],
   // Arc USDC is not in x402's default-asset table; allow it. No cap here on
   // purpose: the policy hook below is the single authority (it enforces
   // maxPerCall, dailyCap, payee, asset and network), so refusals always

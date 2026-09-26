@@ -1,6 +1,6 @@
 // Arc Spend Tracker — x402-paid service.
 //
-//   POST /api/process-description   $0.01 USDC via x402 (Arc Testnet)
+//   POST /api/process-description   $0.01 USDC via x402 (Arc; ARC_NETWORK picks testnet/mainnet)
 //   GET  /api/ledger                 free: recent PurchaseLogged entries
 //   GET  /health                     free
 //
@@ -24,7 +24,7 @@ import { toFacilitatorEvmSigner } from "@x402/evm";
 import { createWalletClient, publicActions, getAddress, parseEventLogs, nonceManager } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
-  arcTestnet, ARC_TESTNET_CAIP2, ARC_TESTNET_USDC, ARC_TESTNET_USDC_EIP712, arcTransport,
+  NETWORK, ARC, arcChain, ARC_CAIP2, ARC_USDC, ARC_USDC_EIP712, arcTransport, serviceKey,
   spendLoggerAbi, txUrl, addressUrl, fmtUsdc,
 } from "../shared/arc.js";
 import { generatePlan } from "./plan.js";
@@ -36,17 +36,15 @@ loadEnv({ path: new URL("../.env", import.meta.url) });
 // ---------------------------------------------------------------------------
 const PORT = Number(process.env.SERVICE_PORT ?? 3001);
 const PRICE_BASE_UNITS = String(process.env.SERVICE_PRICE_BASE_UNITS ?? "10000"); // $0.01
-const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY;
-if (!DEPLOYER_PRIVATE_KEY || DEPLOYER_PRIVATE_KEY === "0x...") {
-  throw new Error("DEPLOYER_PRIVATE_KEY missing in .env (Arc-Deployer wallet; see SETUP.md Part B).");
-}
+// Testnet: DEPLOYER_PRIVATE_KEY (Arc-Deployer). Mainnet: MAINNET_SERVICE_PRIVATE_KEY (Arc-Service).
+const SERVICE_PRIVATE_KEY = serviceKey();
 
 function resolveSpendLoggerAddress() {
   if (process.env.SPEND_LOGGER_ADDRESS) return getAddress(process.env.SPEND_LOGGER_ADDRESS);
   const deployed = JSON.parse(readFileSync(new URL("../deployed.json", import.meta.url), "utf8"));
-  const rec = deployed.arcTestnet;
-  if (!rec?.address || rec.chainId !== arcTestnet.id) {
-    throw new Error("No Arc Testnet SpendLogger in deployed.json — run `npm run deploy:arc` first.");
+  const rec = deployed[NETWORK];
+  if (!rec?.address || rec.chainId !== arcChain.id) {
+    throw new Error(`No ${ARC.name} SpendLogger in deployed.json (key "${NETWORK}") — deploy it first.`);
   }
   return getAddress(rec.address);
 }
@@ -59,8 +57,8 @@ const SPEND_LOGGER = resolveSpendLoggerAddress();
 // nonceManager: settlement and logPurchase writes can be in flight at the same
 // time under concurrent requests; without local nonce tracking they collide and
 // one of them is silently replaced (seen in testing: 2/4 concurrent calls failed).
-const account = privateKeyToAccount(DEPLOYER_PRIVATE_KEY, { nonceManager });
-const chainClient = createWalletClient({ account, chain: arcTestnet, transport: arcTransport() })
+const account = privateKeyToAccount(SERVICE_PRIVATE_KEY, { nonceManager });
+const chainClient = createWalletClient({ account, chain: arcChain, transport: arcTransport() })
   .extend(publicActions);
 const SERVICE_ADDRESS = account.address;
 
@@ -71,26 +69,26 @@ const SERVICE_ADDRESS = account.address;
 // ---------------------------------------------------------------------------
 const TEST_ONLY_PAYTO = process.env.TEST_ONLY_PAYTO ? getAddress(process.env.TEST_ONLY_PAYTO) : null;
 const TEST_ONLY_ASSET = process.env.TEST_ONLY_ASSET ? getAddress(process.env.TEST_ONLY_ASSET) : null;
-if ((TEST_ONLY_PAYTO || TEST_ONLY_ASSET) && process.env.NODE_ENV === "production") {
-  throw new Error("TEST_ONLY_* overrides are not allowed with NODE_ENV=production");
+if ((TEST_ONLY_PAYTO || TEST_ONLY_ASSET) && (process.env.NODE_ENV === "production" || !ARC.testnet)) {
+  throw new Error("TEST_ONLY_* overrides are only allowed on testnet, never with NODE_ENV=production");
 }
 const PAY_TO = TEST_ONLY_PAYTO ?? SERVICE_ADDRESS;
-const PRICE_ASSET = TEST_ONLY_ASSET ?? ARC_TESTNET_USDC;
+const PRICE_ASSET = TEST_ONLY_ASSET ?? ARC_USDC;
 // EIP-712 domain of the priced asset. USDC and EURC on Arc Testnet are both
 // Circle FiatTokenV2_2 with version "2"; the name differs.
 const PRICE_ASSET_EIP712 = TEST_ONLY_ASSET
   ? { name: process.env.TEST_ONLY_ASSET_NAME ?? "EURC", version: "2" }
-  : ARC_TESTNET_USDC_EIP712;
+  : ARC_USDC_EIP712;
 
 // ---------------------------------------------------------------------------
-// In-process x402 facilitator (verify + settle on Arc Testnet)
+// In-process x402 facilitator (verify + settle on Arc)
 // ---------------------------------------------------------------------------
 const facilitator = new x402Facilitator();
 registerExactEvmScheme(facilitator, {
   // 60 s receipt wait: Arc blocks are ~0.6 s, so a settlement not mined in a
   // minute is dead; failing fast beats holding the client connection open.
   signer: toFacilitatorEvmSigner({ ...chainClient, address: SERVICE_ADDRESS }, { confirmationTimeoutMs: 60_000 }),
-  networks: ARC_TESTNET_CAIP2,
+  networks: ARC_CAIP2,
 });
 facilitator
   .onAfterSettle(async ({ result }) => result.success
@@ -110,13 +108,13 @@ const localFacilitatorClient = {
 // Resource server + route pricing
 // ---------------------------------------------------------------------------
 const resourceServer = new x402ResourceServer(localFacilitatorClient)
-  .register(ARC_TESTNET_CAIP2, new ExactEvmServerScheme());
+  .register(ARC_CAIP2, new ExactEvmServerScheme());
 
 const routes = {
   "POST /api/process-description": {
     accepts: {
       scheme: "exact",
-      network: ARC_TESTNET_CAIP2,
+      network: ARC_CAIP2,
       payTo: PAY_TO,
       // Arc is not in x402's default-asset table, so price is an explicit AssetAmount.
       // `extra` is the token's EIP-712 domain both sides need for TransferWithAuthorization.
@@ -208,7 +206,7 @@ app.use((req, res, next) => reqStore.run({ res }, next));
 app.use((req, _res, next) => { console.log(`${new Date().toISOString()} ${req.method} ${req.path}`); next(); });
 
 app.get("/health", (_req, res) => res.json({
-  ok: true, network: ARC_TESTNET_CAIP2, service: SERVICE_ADDRESS, spendLogger: SPEND_LOGGER,
+  ok: true, network: ARC_CAIP2, service: SERVICE_ADDRESS, spendLogger: SPEND_LOGGER,
   price: { asset: PRICE_ASSET, amount: PRICE_BASE_UNITS, usd: fmtUsdc(PRICE_BASE_UNITS) }, payTo: PAY_TO,
   testOverrides: Boolean(TEST_ONLY_PAYTO || TEST_ONLY_ASSET),
   pendingAudit: pendingAuditCount,
@@ -243,14 +241,14 @@ app.post("/api/process-description", async (req, res) => {
   const plan = await generatePlan(description);
   res.json({
     plan,
-    billing: { asset: "USDC", network: ARC_TESTNET_CAIP2, amount: PRICE_BASE_UNITS, usd: fmtUsdc(PRICE_BASE_UNITS), audit_contract: SPEND_LOGGER },
+    billing: { asset: "USDC", network: ARC_CAIP2, amount: PRICE_BASE_UNITS, usd: fmtUsdc(PRICE_BASE_UNITS), audit_contract: SPEND_LOGGER },
   });
 });
 
 app.listen(PORT, () => {
   console.log("Arc Spend Tracker service");
   console.log(`  listening   http://localhost:${PORT}`);
-  console.log(`  network     ${ARC_TESTNET_CAIP2} (Arc Testnet)`);
+  console.log(`  network     ${ARC_CAIP2} (${ARC.name})`);
   console.log(`  payTo       ${SERVICE_ADDRESS}  ${addressUrl(SERVICE_ADDRESS)}`);
   console.log(`  SpendLogger ${SPEND_LOGGER}  ${addressUrl(SPEND_LOGGER)}`);
   console.log(`  price       ${fmtUsdc(PRICE_BASE_UNITS)} USDC per POST /api/process-description`);

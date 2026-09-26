@@ -8,7 +8,7 @@ import "dotenv/config";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createWalletClient, publicActions, getAddress, parseEventLogs, nonceManager } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { arcTestnet, arcTransport, spendLoggerAbi, txUrl } from "../shared/arc.js";
+import { NETWORK, arcChain, arcTransport, serviceKey, spendLoggerAbi, txUrl } from "../shared/arc.js";
 
 const FILE = new URL("../service/pending-audit.jsonl", import.meta.url);
 if (!existsSync(FILE)) { console.log("nothing pending"); process.exit(0); }
@@ -16,9 +16,9 @@ const entries = readFileSync(FILE, "utf8").split("\n").filter(Boolean).map((l) =
 if (entries.length === 0) { console.log("nothing pending"); process.exit(0); }
 
 const deployed = JSON.parse(readFileSync(new URL("../deployed.json", import.meta.url), "utf8"));
-const SPEND_LOGGER = getAddress(deployed.arcTestnet.address);
-const account = privateKeyToAccount(process.env.DEPLOYER_PRIVATE_KEY, { nonceManager });
-const chain = createWalletClient({ account, chain: arcTestnet, transport: arcTransport() }).extend(publicActions);
+const SPEND_LOGGER = getAddress(deployed[NETWORK].address);
+const account = privateKeyToAccount(serviceKey(), { nonceManager });
+const chain = createWalletClient({ account, chain: arcChain, transport: arcTransport() }).extend(publicActions);
 
 console.log(`${entries.length} pending audit entr${entries.length === 1 ? "y" : "ies"} → SpendLogger ${SPEND_LOGGER}`);
 const stillPending = [];

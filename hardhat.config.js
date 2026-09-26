@@ -2,10 +2,13 @@ import { defineConfig } from "hardhat/config";
 import hardhatToolboxViem from "@nomicfoundation/hardhat-toolbox-viem";
 import "dotenv/config";
 
-// All networks below are TESTNETS. Never add a mainnet here.
+// arcMainnet is listed for source verification only: it has no accounts, so
+// hardhat can never sign a mainnet tx. Mainnet deploys go through
+// scripts/owner-sign.js (Arc-Owner signs in MetaMask).
 // Values from https://docs.arc.io/arc/references/connect-to-arc
 const ARC_TESTNET_RPC = process.env.ARC_TESTNET_RPC ?? "https://rpc.testnet.arc.io";
 const ARC_TESTNET_CHAIN_ID = 5042002;
+const ARC_MAINNET_CHAIN_ID = 5042;
 
 // Deployer key is only read when present so `hardhat test` works without a .env.
 const deployerAccounts = process.env.DEPLOYER_PRIVATE_KEY
@@ -25,6 +28,17 @@ export default defineConfig({
           name: "ArcScan",
           url: "https://testnet.arcscan.app",
           apiUrl: "https://testnet.arcscan.app/api",
+        },
+      },
+    },
+    [ARC_MAINNET_CHAIN_ID]: {
+      name: "Arc Mainnet",
+      chainType: "generic",
+      blockExplorers: {
+        blockscout: {
+          name: "Arc Explorer",
+          url: "https://explorer.arc.io",
+          apiUrl: "https://explorer.arc.io/api",
         },
       },
     },
@@ -49,6 +63,15 @@ export default defineConfig({
       url: ARC_TESTNET_RPC,
       chainId: ARC_TESTNET_CHAIN_ID,
       accounts: deployerAccounts,
+    },
+
+    // Verification only — no accounts (see top of file).
+    arcMainnet: {
+      type: "http",
+      chainType: "generic",
+      url: process.env.ARC_MAINNET_RPC ?? "https://rpc.mainnet.arc.io",
+      chainId: ARC_MAINNET_CHAIN_ID,
+      accounts: [],
     },
 
     // Fallback ONLY if Arc is unreachable (spec §9). Public x402 facilitator lives here.
