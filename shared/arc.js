@@ -1,5 +1,5 @@
 // Shared Arc constants for the service, the agent and the scripts.
-// ARC_NETWORK in .env picks the network: "arcTestnet" (default) or "arcMainnet".
+// ARC_NETWORK (or --network) picks the network: "arcTestnet" (default) or "arcMainnet".
 // Values come from https://docs.arc.io; USDC's EIP-712 domain was read from
 // each chain's contract (see below).
 import { config as loadEnv } from "dotenv";
@@ -36,7 +36,9 @@ const NETWORKS = {
   },
 };
 
-export const NETWORK = process.env.ARC_NETWORK ?? "arcTestnet";
+// `--network arcMainnet` on the command line wins over ARC_NETWORK in the environment.
+const argIdx = process.argv.indexOf("--network");
+export const NETWORK = (argIdx !== -1 ? process.argv[argIdx + 1] : undefined) ?? process.env.ARC_NETWORK ?? "arcTestnet";
 export const ARC = NETWORKS[NETWORK];
 if (!ARC) throw new Error(`ARC_NETWORK="${NETWORK}" — use one of: ${Object.keys(NETWORKS).join(", ")}`);
 

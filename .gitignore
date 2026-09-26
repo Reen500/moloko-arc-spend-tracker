@@ -22,3 +22,6 @@ Thumbs.db
 .cache/
 service/pending-audit.jsonl
 exports/
+
+# claude code (personal permissions)
+.claude/settings.local.json
