@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "x402-paid API on Arc Testnet that logs every paid call to SpendLogger",
+  "description": "x402-paid API on Arc (testnet or mainnet) that logs every paid call to SpendLogger",
   "scripts": {
     "start": "node server.js"
   },

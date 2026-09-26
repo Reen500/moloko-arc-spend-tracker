@@ -34,7 +34,7 @@ loadEnv({ path: new URL("../.env", import.meta.url) });
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const PORT = Number(process.env.SERVICE_PORT ?? 3001);
+const PORT = Number(process.env.PORT ?? process.env.SERVICE_PORT ?? 3001); // PORT: set by Railway
 const PRICE_BASE_UNITS = String(process.env.SERVICE_PRICE_BASE_UNITS ?? "10000"); // $0.01
 // Testnet: DEPLOYER_PRIVATE_KEY (Arc-Deployer). Mainnet: MAINNET_SERVICE_PRIVATE_KEY (Arc-Service).
 const SERVICE_PRIVATE_KEY = serviceKey();
@@ -201,7 +201,21 @@ resourceServer.onAfterSettle(async ({ paymentPayload, requirements, result }) =>
 // App
 // ---------------------------------------------------------------------------
 const app = express();
+app.set("trust proxy", 1); // behind Railway's proxy: req.ip is the client, not the proxy
 app.use(express.json({ limit: "64kb" }));
+
+// Per-IP rate limit. The free routes fan out to RPC reads, and the public RPC's
+// rate limit is shared with settlement — a flood of free reads must not be able
+// to starve paid calls. 60 requests / minute / IP, fixed window, in memory.
+const RATE = { windowMs: 60_000, max: 60 };
+const hits = new Map();
+setInterval(() => hits.clear(), RATE.windowMs).unref();
+app.use((req, res, next) => {
+  const n = (hits.get(req.ip) ?? 0) + 1;
+  hits.set(req.ip, n);
+  if (n > RATE.max) return res.status(429).json({ error: "rate limited — try again in a minute" });
+  next();
+});
 app.use((req, res, next) => reqStore.run({ res }, next));
 app.use((req, _res, next) => { console.log(`${new Date().toISOString()} ${req.method} ${req.path}`); next(); });
 
@@ -212,8 +226,13 @@ app.get("/health", (_req, res) => res.json({
   pendingAudit: pendingAuditCount,
 }));
 
+// Ledger reads are cached briefly: up to 1 + 2·limit RPC calls per miss.
+const LEDGER_TTL_MS = 15_000;
+const ledgerCache = new Map(); // limit -> { at, body }
 app.get("/api/ledger", async (req, res) => {
-  const limit = Math.min(Number(req.query.limit ?? 10), 50);
+  const limit = Math.max(1, Math.min(Number.parseInt(req.query.limit ?? "10", 10) || 10, 50));
+  const hit = ledgerCache.get(limit);
+  if (hit && Date.now() - hit.at < LEDGER_TTL_MS) return res.json(hit.body);
   const count = await chainClient.readContract({ address: SPEND_LOGGER, abi: spendLoggerAbi, functionName: "purchaseCount" });
   const ids = [];
   for (let i = count - 1n; i >= 0n && ids.length < limit; i--) ids.push(i);
@@ -228,7 +247,9 @@ app.get("/api/ledger", async (req, res) => {
       outcome: o.recorded ? { score: o.score, reasonHash: o.reasonHash, recordedBy: o.recordedBy, timestamp: Number(o.timestamp) } : null,
     };
   }));
-  res.json({ contract: SPEND_LOGGER, explorer: addressUrl(SPEND_LOGGER), purchaseCount: count.toString(), purchases });
+  const body = { contract: SPEND_LOGGER, explorer: addressUrl(SPEND_LOGGER), purchaseCount: count.toString(), purchases };
+  ledgerCache.set(limit, { at: Date.now(), body });
+  res.json(body);
 });
 
 app.use(paymentMiddleware(routes, resourceServer));
